@@ -97,14 +97,6 @@ fn compile_file(input_file: &str, output_file: &str) {
         .arg(&output_exe)
         .arg("-Wno-override-module");
 
-    if cfg!(target_os = "windows") {
-        cmd.arg("-lmsvcrt");
-    } else if cfg!(target_os = "macos") {
-        cmd.arg("-lSystem");
-    } else {
-        cmd.arg("-lc");
-    }
-
     if let Err(e) = fs::write(&ll_file, llvm_ir) {
         eprintln!("Error writing LLVM IR: {}", e);
         process::exit(1);

@@ -139,6 +139,7 @@ pub enum BinOp {
     GreaterEqual,
     And,
     Or,
+    DotDot,
 }
 
 #[derive(Debug, Clone)]
@@ -412,12 +413,10 @@ impl<'a> Parser<'a> {
                 });
             } else {
                 self.consume(&TokenType::Semicolon, "Expected ';'")?;
-                return Ok(AstNode::ExpressionStatement(Box::new(
-                    AstNode::Index {
-                        array: Box::new(AstNode::Identifier { name, location }),
-                        index: Box::new(index),
-                    }
-                )));
+                return Ok(AstNode::ExpressionStatement(Box::new(AstNode::Index {
+                    array: Box::new(AstNode::Identifier { name, location }),
+                    index: Box::new(index),
+                })));
             }
         }
 
@@ -513,7 +512,11 @@ impl<'a> Parser<'a> {
         let value = Box::new(self.parse_expression()?);
         self.consume(&TokenType::Semicolon, "Expected ';'")?;
 
-        Ok(AstNode::Assignment { name, value, location })
+        Ok(AstNode::Assignment {
+            name,
+            value,
+            location,
+        })
     }
 
     fn parse_block(&mut self) -> Result<AstNode, String> {
@@ -563,16 +566,28 @@ impl<'a> Parser<'a> {
         self.consume(&TokenType::For, "Expected 'for'")?;
         let variable = self.consume_identifier("Expected loop variable")?;
         self.consume(&TokenType::In, "Expected 'in'")?;
-        let iterator = Box::new(self.parse_expression()?);
-        let body = Box::new(self.parse_block()?);
 
+        let start = self.parse_expression()?;
+
+        let iterator = if self.check(&TokenType::DotDot) {
+            self.advance();
+            let end = self.parse_expression()?;
+            AstNode::BinaryOp {
+                op: BinOp::DotDot,
+                left: Box::new(start),
+                right: Box::new(end),
+            }
+        } else {
+            start
+        };
+
+        let body = Box::new(self.parse_block()?);
         Ok(AstNode::For {
             variable,
-            iterator,
+            iterator: Box::new(iterator),
             body,
         })
     }
-
     fn parse_match(&mut self) -> Result<AstNode, String> {
         self.consume(&TokenType::Match, "Expected 'match'")?;
         let value = Box::new(self.parse_expression()?);
@@ -763,7 +778,10 @@ impl<'a> Parser<'a> {
     fn parse_term(&mut self) -> Result<AstNode, String> {
         let mut left = self.parse_factor()?;
 
-        while self.check(&TokenType::Star) || self.check(&TokenType::Slash) || self.check(&TokenType::Percent) {
+        while self.check(&TokenType::Star)
+            || self.check(&TokenType::Slash)
+            || self.check(&TokenType::Percent)
+        {
             let op = if self.check(&TokenType::Star) {
                 self.advance();
                 BinOp::Mul
@@ -895,8 +913,13 @@ impl<'a> Parser<'a> {
                 } else {
                     break;
                 }
-            } else if self.check(&TokenType::Colon) && self.peek_ahead(1).token_type == TokenType::Colon {
-                if let AstNode::Identifier { name: enum_name, .. } = left {
+            } else if self.check(&TokenType::Colon)
+                && self.peek_ahead(1).token_type == TokenType::Colon
+            {
+                if let AstNode::Identifier {
+                    name: enum_name, ..
+                } = left
+                {
                     self.advance();
                     self.advance();
                     let variant = self.consume_identifier("Expected variant name")?;
@@ -1043,3 +1066,4 @@ impl<'a> Parser<'a> {
         )
     }
 }
+

@@ -438,6 +438,17 @@ impl CodeGenerator {
                 iterator,
                 body,
             } => {
+                let (start_val, end_val) = if let AstNode::BinaryOp {
+                    op: BinOp::DotDot,
+                    left,
+                    right,
+                } = iterator.as_ref()
+                {
+                    (self.gen_node(left), self.gen_node(right))
+                } else {
+                    ("0".to_string(), self.gen_node(iterator)) // no range, just end bound
+                };
+
                 let start_label = self.new_label("for_start");
                 let body_label = self.new_label("for_body");
                 let end_label = self.new_label("for_end");
@@ -449,7 +460,11 @@ impl CodeGenerator {
 
                 let loop_var = self.new_temp();
                 self.emit(&format!("  {} = alloca i64", loop_var));
-                self.emit(&format!("  store i64 0, i64* {}", loop_var));
+                self.emit(&format!("  store i64 {}, i64* {}", start_val, loop_var));
+
+                let end_ptr = self.new_temp();
+                self.emit(&format!("  {} = alloca i64", end_ptr));
+                self.emit(&format!("  store i64 {}, i64* {}", end_val, end_ptr));
 
                 self.current_function_vars.insert(
                     variable.clone(),
@@ -463,12 +478,18 @@ impl CodeGenerator {
                 );
 
                 self.emit(&format!("  br label %{}", start_label));
-
                 self.emit(&format!("{}:", start_label));
+
                 let current = self.new_temp();
+                let end_loaded = self.new_temp();
                 self.emit(&format!("  {} = load i64, i64* {}", current, loop_var));
+                self.emit(&format!("  {} = load i64, i64* {}", end_loaded, end_ptr));
+
                 let cond = self.new_temp();
-                self.emit(&format!("  {} = icmp slt i64 {}, 10", cond, current));
+                self.emit(&format!(
+                    "  {} = icmp slt i64 {}, {}",
+                    cond, current, end_loaded
+                ));
                 self.emit(&format!(
                     "  br i1 {}, label %{}, label %{}",
                     cond, body_label, end_label
@@ -477,8 +498,8 @@ impl CodeGenerator {
                 self.emit(&format!("{}:", body_label));
                 self.gen_node(body);
 
-                let next = self.new_temp();
                 let curr2 = self.new_temp();
+                let next = self.new_temp();
                 self.emit(&format!("  {} = load i64, i64* {}", curr2, loop_var));
                 self.emit(&format!("  {} = add i64 {}, 1", next, curr2));
                 self.emit(&format!("  store i64 {}, i64* {}", next, loop_var));
@@ -554,6 +575,7 @@ impl CodeGenerator {
                 let right_reg = self.gen_node(right);
 
                 match op {
+                    BinOp::DotDot => right_reg,
                     BinOp::Add => {
                         if self.infer_llvm_type(left) == "string" {
                             self.gen_string_concat(&left_reg, &right_reg)
@@ -808,27 +830,30 @@ impl CodeGenerator {
             },
 
             AstNode::Call { name, args } => match name.as_str() {
-                "puts" if !args.is_empty() => {
-                    let arg_reg = self.gen_node(&args[0]);
-                    let result = self.new_temp();
-                    self.emit(&format!("  {} = call i32 @puts(i8* {})", result, arg_reg));
-                    result
-                }
-                "print_int" if !args.is_empty() => {
-                    let arg_reg = self.gen_node(&args[0]);
-                    let fmt = self.new_string_literal("%lld\n");
-                    let fmt_ptr = self.new_temp();
-                    self.emit(&format!(
-                        "  {} = getelementptr inbounds [6 x i8], [6 x i8]* @{}, i64 0, i64 0",
-                        fmt_ptr, fmt
-                    ));
-                    let result = self.new_temp();
-                    self.emit(&format!(
-                        "  {} = call i32 (i8*, ...) @printf(i8* {}, i64 {})",
-                        result, fmt_ptr, arg_reg
-                    ));
-                    result
-                }
+                "print" if !args.is_empty() => match self.infer_llvm_type(&args[0]) {
+                    t if t == "string" => {
+                        let arg_reg = self.gen_node(&args[0]);
+                        let result = self.new_temp();
+                        self.emit(&format!("  {} = call i32 @puts(i8* {})", result, arg_reg));
+                        result
+                    }
+                    _ => {
+                        let arg_reg = self.gen_node(&args[0]);
+                        let fmt = self.new_string_literal("%lld\n");
+                        let fmt_ptr = self.new_temp();
+                        let fmt_len = "%lld\n".len() + 1;
+                        self.emit(&format!(
+                            "  {} = getelementptr inbounds [{} x i8], [{} x i8]* @{}, i64 0, i64 0",
+                            fmt_ptr, fmt_len, fmt_len, fmt
+                        ));
+                        let result = self.new_temp();
+                        self.emit(&format!(
+                            "  {} = call i32 (i8*, ...) @printf(i8* {}, i64 {})",
+                            result, fmt_ptr, arg_reg
+                        ));
+                        result
+                    }
+                },
                 "read_file" if !args.is_empty() => {
                     let filename_reg = self.gen_node(&args[0]);
                     let result = self.new_temp();
