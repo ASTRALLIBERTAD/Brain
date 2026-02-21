@@ -1,5 +1,3 @@
-use std::fmt;
-
 #[derive(Debug, Clone, PartialEq)]
 pub enum TokenType {
     // Keywords
@@ -19,19 +17,19 @@ pub enum TokenType {
     Continue,
     True,
     False,
-    
+
     // Types
     IntType,
     BoolType,
     StringType,
     CharType,
-    
+
     // Literals
     Number(i64),
     StringLit(String),
     CharLit(char),
     Identifier(String),
-    
+
     // Operators
     Plus,
     Minus,
@@ -49,7 +47,7 @@ pub enum TokenType {
     Not,
     And,
     Or,
-    
+
     // Delimiters
     LParen,
     RParen,
@@ -64,7 +62,7 @@ pub enum TokenType {
     Arrow,
     FatArrow,
     DotDot,
-    
+
     // Special
     Eof,
 }
@@ -96,35 +94,35 @@ impl<'a> Lexer<'a> {
             column: 1,
         }
     }
-    
+
     pub fn tokenize(&mut self) -> Result<Vec<Token>, String> {
         let mut tokens = Vec::new();
-        
+
         while !self.is_at_end() {
             self.skip_whitespace_and_comments();
-            
+
             if self.is_at_end() {
                 break;
             }
-            
+
             let token = self.next_token()?;
             tokens.push(token);
         }
-        
+
         tokens.push(Token {
             token_type: TokenType::Eof,
             line: self.line,
             column: self.column,
         });
-        
+
         Ok(tokens)
     }
-    
+
     fn next_token(&mut self) -> Result<Token, String> {
         let line = self.line;
         let column = self.column;
         let ch = self.peek();
-        
+
         let token_type = match ch {
             '+' => {
                 self.advance();
@@ -205,7 +203,9 @@ impl<'a> Lexer<'a> {
                     self.advance();
                     TokenType::Or
                 } else {
-                    return Err(self.error_with_context("Unexpected character '|' (did you mean '||'?)"));
+                    return Err(
+                        self.error_with_context("Unexpected character '|' (did you mean '||'?)")
+                    );
                 }
             }
             '(' => {
@@ -261,22 +261,23 @@ impl<'a> Lexer<'a> {
                 return Err(self.error_with_context(&format!("Unexpected character '{}'", ch)));
             }
         };
-        
+
         Ok(Token {
             token_type,
             line,
             column,
         })
     }
-    
+
     fn read_string(&mut self) -> Result<TokenType, String> {
-        
         self.advance();
         let mut value = String::new();
-        
+
         while !self.is_at_end() && self.peek() != '"' {
             if self.peek() == '\n' {
-                return Err(self.error_with_context("Unterminated string literal (strings cannot span multiple lines)"));
+                return Err(self.error_with_context(
+                    "Unterminated string literal (strings cannot span multiple lines)",
+                ));
             }
             if self.peek() == '\\' {
                 self.advance();
@@ -294,23 +295,24 @@ impl<'a> Lexer<'a> {
                 value.push(self.advance());
             }
         }
-        
+
         if self.is_at_end() {
-            return Err(self.error_with_context("Unterminated string literal (missing closing quote)"));
+            return Err(
+                self.error_with_context("Unterminated string literal (missing closing quote)")
+            );
         }
-        
+
         self.advance();
         Ok(TokenType::StringLit(value))
     }
-    
+
     fn read_char(&mut self) -> Result<TokenType, String> {
-        
         self.advance();
-        
+
         if self.is_at_end() {
             return Err(self.error_with_context("Unterminated character literal"));
         }
-        
+
         let ch = if self.peek() == '\\' {
             self.advance();
             match self.peek() {
@@ -319,35 +321,42 @@ impl<'a> Lexer<'a> {
                 'r' => '\r',
                 '\\' => '\\',
                 '\'' => '\'',
-                _ => return Err(self.error_with_context(&format!("Invalid escape sequence '\\{}' in character literal", self.peek()))),
+                _ => {
+                    return Err(self.error_with_context(&format!(
+                        "Invalid escape sequence '\\{}' in character literal",
+                        self.peek()
+                    )));
+                }
             }
         } else {
             self.peek()
         };
-        
+
         self.advance();
-        
+
         if self.peek() != '\'' {
-            return Err(self.error_with_context("Unterminated character literal (expected closing quote)"));
+            return Err(
+                self.error_with_context("Unterminated character literal (expected closing quote)")
+            );
         }
-        
+
         self.advance();
         Ok(TokenType::CharLit(ch))
     }
-    
+
     fn read_number(&mut self) -> TokenType {
         let mut value = String::new();
-        
+
         while !self.is_at_end() && self.peek().is_ascii_digit() {
             value.push(self.advance());
         }
-        
+
         TokenType::Number(value.parse().unwrap())
     }
-    
+
     fn read_identifier(&mut self) -> TokenType {
         let mut value = String::new();
-        
+
         while !self.is_at_end() {
             let ch = self.peek();
             if ch.is_alphanumeric() || ch == '_' {
@@ -356,7 +365,7 @@ impl<'a> Lexer<'a> {
                 break;
             }
         }
-        
+
         match value.as_str() {
             "let" => TokenType::Let,
             "mut" => TokenType::Mut,
@@ -381,7 +390,7 @@ impl<'a> Lexer<'a> {
             _ => TokenType::Identifier(value),
         }
     }
-    
+
     fn skip_whitespace_and_comments(&mut self) {
         while !self.is_at_end() {
             match self.peek() {
@@ -412,10 +421,7 @@ impl<'a> Lexer<'a> {
         let mut error = String::new();
 
         // Header: filename:line:column: error message
-        error.push_str(&format!(
-            "\x1b[1m\x1b[31merror\x1b[0m: {}\n",
-            message
-        ));
+        error.push_str(&format!("\x1b[1m\x1b[31merror\x1b[0m: {}\n", message));
 
         error.push_str(&format!(
             "  \x1b[1m\x1b[34m-->\x1b[0m {}:{}:{}\n",
@@ -473,8 +479,6 @@ impl<'a> Lexer<'a> {
         error
     }
 
-    
-    
     fn peek(&self) -> char {
         if self.is_at_end() {
             '\0'
@@ -482,7 +486,7 @@ impl<'a> Lexer<'a> {
             self.chars[self.current]
         }
     }
-    
+
     fn peek_ahead(&self, offset: usize) -> char {
         let pos = self.current + offset;
         if pos >= self.chars.len() {
@@ -491,15 +495,16 @@ impl<'a> Lexer<'a> {
             self.chars[pos]
         }
     }
-    
+
     fn advance(&mut self) -> char {
         let ch = self.chars[self.current];
         self.current += 1;
         self.column += 1;
         ch
     }
-    
+
     fn is_at_end(&self) -> bool {
         self.current >= self.chars.len()
     }
 }
+

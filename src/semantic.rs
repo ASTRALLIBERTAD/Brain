@@ -1,4 +1,4 @@
-use crate::parser::{AstNode, BinOp, Parameter, Location};
+use crate::parser::{AstNode, BinOp, Location, Parameter};
 use std::collections::HashMap;
 
 #[derive(Debug, Clone)]
@@ -61,13 +61,7 @@ impl<'a> SemanticAnalyzer<'a> {
                         param.is_mutable
                     };
 
-                    self.declare_variable(
-                        &param.name,
-                        is_mutable,
-                        param.param_type.clone(),
-                        0,
-                        0,
-                    );
+                    self.declare_variable(&param.name, is_mutable, param.param_type.clone(), 0, 0);
                 }
 
                 self.visit(body)?;
@@ -75,7 +69,13 @@ impl<'a> SemanticAnalyzer<'a> {
                 Ok(())
             }
 
-            AstNode::LetBinding { mutable, name, value, type_annotation, location } => {
+            AstNode::LetBinding {
+                mutable,
+                name,
+                value,
+                type_annotation,
+                location,
+            } => {
                 self.current_line = location.line;
                 self.current_column = location.column;
 
@@ -86,15 +86,19 @@ impl<'a> SemanticAnalyzer<'a> {
                     self.consume_variable(var_name)?;
                 }
 
-                let var_type = type_annotation.clone().unwrap_or_else(|| {
-                    self.infer_type(value)
-                });
+                let var_type = type_annotation
+                    .clone()
+                    .unwrap_or_else(|| self.infer_type(value));
 
                 self.declare_variable(name, *mutable, var_type, location.line, location.column);
                 Ok(())
             }
 
-            AstNode::Assignment { name, value, location } => {
+            AstNode::Assignment {
+                name,
+                value,
+                location,
+            } => {
                 self.current_line = location.line;
                 self.current_column = location.column;
 
@@ -112,7 +116,12 @@ impl<'a> SemanticAnalyzer<'a> {
                 Ok(())
             }
 
-            AstNode::ArrayAssignment { array, index, value, location } => {
+            AstNode::ArrayAssignment {
+                array,
+                index,
+                value,
+                location,
+            } => {
                 self.current_line = location.line;
                 self.current_column = location.column;
 
@@ -133,7 +142,11 @@ impl<'a> SemanticAnalyzer<'a> {
                 Ok(())
             }
 
-            AstNode::If { condition, then_block, else_block } => {
+            AstNode::If {
+                condition,
+                then_block,
+                else_block,
+            } => {
                 self.visit(condition)?;
                 self.visit(then_block)?;
                 if let Some(else_block) = else_block {
@@ -151,11 +164,21 @@ impl<'a> SemanticAnalyzer<'a> {
                 Ok(())
             }
 
-            AstNode::For { variable, iterator, body } => {
+            AstNode::For {
+                variable,
+                iterator,
+                body,
+            } => {
                 self.visit(iterator)?;
                 self.push_scope();
 
-                self.declare_variable(variable, false, "int".to_string(), self.current_line, self.current_column);
+                self.declare_variable(
+                    variable,
+                    false,
+                    "int".to_string(),
+                    self.current_line,
+                    self.current_column,
+                );
 
                 let was_in_loop = self.in_loop;
                 self.in_loop = true;
@@ -313,7 +336,14 @@ impl<'a> SemanticAnalyzer<'a> {
         }
     }
 
-    fn declare_variable(&mut self, name: &str, mutable: bool, var_type: String, line: usize, column: usize) {
+    fn declare_variable(
+        &mut self,
+        name: &str,
+        mutable: bool,
+        var_type: String,
+        line: usize,
+        column: usize,
+    ) {
         let scope = self.symbol_table.last_mut().unwrap();
         scope.insert(
             name.to_string(),
@@ -349,7 +379,12 @@ impl<'a> SemanticAnalyzer<'a> {
                     "{}:{}:{}: Error: use of moved value '{}'
     Note: value moved at line {}, cannot be used again
     Help: Consider borrowing '&{}' to keep ownership in the current scope",
-                    self.filename, self.current_line, self.current_column, name, info.declared_line, name
+                    self.filename,
+                    self.current_line,
+                    self.current_column,
+                    name,
+                    info.declared_line,
+                    name
                 ));
             }
         }
@@ -422,7 +457,8 @@ Note: {} active borrow(s) exist",
     }
 
     fn get_type(&self, name: &str) -> Option<&str> {
-        self.lookup_variable(name).map(|info| info.var_type.as_str())
+        self.lookup_variable(name)
+            .map(|info| info.var_type.as_str())
     }
 
     fn infer_type(&self, expr: &AstNode) -> String {
@@ -455,3 +491,4 @@ Note: {} active borrow(s) exist",
         self.symbol_table.pop();
     }
 }
+

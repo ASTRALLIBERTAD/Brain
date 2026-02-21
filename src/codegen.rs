@@ -29,7 +29,15 @@ struct LoopLabels {
     continue_label: String,
     break_label: String,
 }
-
+fn get_target_triple() -> &'static str {
+    if cfg!(target_os = "windows") {
+        "x86_64-pc-windows-msvc"
+    } else if cfg!(target_os = "macos") {
+        "x86_64-apple-macosx10.15.0"
+    } else {
+        "x86_64-pc-linux-gnu"
+    }
+}
 impl CodeGenerator {
     pub fn new() -> Self {
         CodeGenerator {
@@ -63,6 +71,7 @@ impl CodeGenerator {
 
     fn emit_header(&mut self) {
         self.emit("declare i32 @puts(i8*)");
+        self.emit("declare i32 @strcmp(i8*, i8*)");
         self.emit("declare i8* @malloc(i64)");
         self.emit("declare void @free(i8*)");
         self.emit("declare i8* @strcpy(i8*, i8*)");
@@ -78,7 +87,9 @@ impl CodeGenerator {
         self.emit("");
 
         self.emit("define i8* @read_file_impl(i8* %filename) {");
-        self.emit("  %mode = getelementptr inbounds [2 x i8], [2 x i8]* @.str.mode.r, i64 0, i64 0");
+        self.emit(
+            "  %mode = getelementptr inbounds [2 x i8], [2 x i8]* @.str.mode.r, i64 0, i64 0",
+        );
         self.emit("  %file = call i8* @fopen(i8* %filename, i8* %mode)");
         self.emit("  %is_null = icmp eq i8* %file, null");
         self.emit("  br i1 %is_null, label %error, label %read");
@@ -99,7 +110,9 @@ impl CodeGenerator {
         self.emit("");
 
         self.emit("define i32 @write_file_impl(i8* %filename, i8* %content) {");
-        self.emit("  %mode = getelementptr inbounds [2 x i8], [2 x i8]* @.str.mode.w, i64 0, i64 0");
+        self.emit(
+            "  %mode = getelementptr inbounds [2 x i8], [2 x i8]* @.str.mode.w, i64 0, i64 0",
+        );
         self.emit("  %file = call i8* @fopen(i8* %filename, i8* %mode)");
         self.emit("  %is_null = icmp eq i8* %file, null");
         self.emit("  br i1 %is_null, label %error, label %write");
@@ -113,8 +126,10 @@ impl CodeGenerator {
         self.emit("}");
         self.emit("");
 
-        self.string_literals.push((".str.mode.r".to_string(), "r".to_string()));
-        self.string_literals.push((".str.mode.w".to_string(), "w".to_string()));
+        self.string_literals
+            .push((".str.mode.r".to_string(), "r".to_string()));
+        self.string_literals
+            .push((".str.mode.w".to_string(), "w".to_string()));
     }
 
     fn emit_footer(&mut self) {
@@ -136,7 +151,11 @@ impl CodeGenerator {
                 "0".to_string()
             }
 
-            AstNode::EnumValue { enum_name, variant, value } => {
+            AstNode::EnumValue {
+                enum_name,
+                variant,
+                value,
+            } => {
                 let tag = if let Some(variants) = self.enum_types.get(enum_name) {
                     variants.iter().position(|v| v == variant).unwrap_or(0) as i64
                 } else {
@@ -147,7 +166,10 @@ impl CodeGenerator {
                 self.emit(&format!("  {} = alloca {{ i32, i64 }}", ptr));
 
                 let tag_ptr = self.new_temp();
-                self.emit(&format!("  {} = getelementptr {{ i32, i64 }}, {{ i32, i64 }}* {}, i32 0, i32 0", tag_ptr, ptr));
+                self.emit(&format!(
+                    "  {} = getelementptr {{ i32, i64 }}, {{ i32, i64 }}* {}, i32 0, i32 0",
+                    tag_ptr, ptr
+                ));
                 self.emit(&format!("  store i32 {}, i32* {}", tag, tag_ptr));
 
                 let val = if let Some(v) = value {
@@ -157,7 +179,10 @@ impl CodeGenerator {
                 };
 
                 let val_ptr = self.new_temp();
-                self.emit(&format!("  {} = getelementptr {{ i32, i64 }}, {{ i32, i64 }}* {}, i32 0, i32 1", val_ptr, ptr));
+                self.emit(&format!(
+                    "  {} = getelementptr {{ i32, i64 }}, {{ i32, i64 }}* {}, i32 0, i32 1",
+                    val_ptr, ptr
+                ));
                 self.emit(&format!("  store i64 {}, i64* {}", val, val_ptr));
 
                 ptr
@@ -168,7 +193,10 @@ impl CodeGenerator {
                 let end_label = self.new_label("match_end");
 
                 let tag_ptr = self.new_temp();
-                self.emit(&format!("  {} = getelementptr {{ i32, i64 }}, {{ i32, i64 }}* {}, i32 0, i32 0", tag_ptr, value_reg));
+                self.emit(&format!(
+                    "  {} = getelementptr {{ i32, i64 }}, {{ i32, i64 }}* {}, i32 0, i32 0",
+                    tag_ptr, value_reg
+                ));
                 let tag = self.new_temp();
                 self.emit(&format!("  {} = load i32, i32* {}", tag, tag_ptr));
 
@@ -181,11 +209,19 @@ impl CodeGenerator {
                     };
 
                     match &arm.pattern {
-                        Pattern::EnumPattern { variant, binding, .. } => {
+                        Pattern::EnumPattern {
+                            variant, binding, ..
+                        } => {
                             let variant_tag = i as i32;
                             let cond = self.new_temp();
-                            self.emit(&format!("  {} = icmp eq i32 {}, {}", cond, tag, variant_tag));
-                            self.emit(&format!("  br i1 {}, label %{}, label %{}", cond, arm_label, next_label));
+                            self.emit(&format!(
+                                "  {} = icmp eq i32 {}, {}",
+                                cond, tag, variant_tag
+                            ));
+                            self.emit(&format!(
+                                "  br i1 {}, label %{}, label %{}",
+                                cond, arm_label, next_label
+                            ));
 
                             self.emit(&format!("{}:", arm_label));
 
@@ -199,13 +235,16 @@ impl CodeGenerator {
                                 self.emit(&format!("  {} = alloca i64", var_ptr));
                                 self.emit(&format!("  store i64 {}, i64* {}", val, var_ptr));
 
-                                self.current_function_vars.insert(binding.clone(), VarMetadata {
-                                    llvm_name: var_ptr,
-                                    var_type: "int".to_string(),
-                                    is_heap: false,
-                                    array_size: None,
-                                    is_string_literal: false,
-                                });
+                                self.current_function_vars.insert(
+                                    binding.clone(),
+                                    VarMetadata {
+                                        llvm_name: var_ptr,
+                                        var_type: "int".to_string(),
+                                        is_heap: false,
+                                        array_size: None,
+                                        is_string_literal: false,
+                                    },
+                                );
                             }
 
                             self.gen_node(&arm.body);
@@ -234,9 +273,12 @@ impl CodeGenerator {
                 "0".to_string()
             }
 
-            AstNode::FunctionDef { name, params, body, return_type } => {
-                self.gen_function(name, params, body, return_type)
-            }
+            AstNode::FunctionDef {
+                name,
+                params,
+                body,
+                return_type,
+            } => self.gen_function(name, params, body, return_type),
 
             AstNode::LetBinding { name, value, .. } => {
                 let value_reg = self.gen_node(value);
@@ -254,28 +296,41 @@ impl CodeGenerator {
                 let ptr = self.new_temp();
                 let llvm_type_str = self.type_to_llvm(&var_type).to_string();
                 self.emit(&format!("  {} = alloca {}", ptr, llvm_type_str));
-                self.emit(&format!("  store {} {}, {}* {}", llvm_type_str, value_reg, llvm_type_str, ptr));
+                self.emit(&format!(
+                    "  store {} {}, {}* {}",
+                    llvm_type_str, value_reg, llvm_type_str, ptr
+                ));
 
-                self.current_function_vars.insert(name.clone(), VarMetadata {
-                    llvm_name: ptr.clone(),
-                    var_type,
-                    is_heap,
-                    array_size,
-                    is_string_literal,
-                });
+                self.current_function_vars.insert(
+                    name.clone(),
+                    VarMetadata {
+                        llvm_name: ptr.clone(),
+                        var_type,
+                        is_heap,
+                        array_size,
+                        is_string_literal,
+                    },
+                );
 
                 ptr
             }
 
-            AstNode::ArrayAssignment { array, index, value, .. } => {
+            AstNode::ArrayAssignment {
+                array,
+                index,
+                value,
+                ..
+            } => {
                 let index_val = self.gen_node(index);
                 let value_reg = self.gen_node(value);
 
                 if let Some(meta) = self.current_function_vars.get(array).cloned() {
                     let array_size = meta.array_size.unwrap_or(100);
                     let elem_ptr = self.new_temp();
-                    self.emit(&format!("  {} = getelementptr [{} x i64], [{} x i64]* {}, i64 0, i64 {}", 
-                        elem_ptr, array_size, array_size, meta.llvm_name, index_val));
+                    self.emit(&format!(
+                        "  {} = getelementptr [{} x i64], [{} x i64]* {}, i64 0, i64 {}",
+                        elem_ptr, array_size, array_size, meta.llvm_name, index_val
+                    ));
                     self.emit(&format!("  store i64 {}, i64* {}", value_reg, elem_ptr));
                 }
 
@@ -288,22 +343,35 @@ impl CodeGenerator {
                 if let Some(meta) = self.current_function_vars.get(name).cloned() {
                     let llvm_type_str = self.type_to_llvm(&meta.var_type).to_string();
                     let llvm_name = meta.llvm_name.clone();
-                    self.emit(&format!("  store {} {}, {}* {}", llvm_type_str, value_reg, llvm_type_str, llvm_name));
+                    self.emit(&format!(
+                        "  store {} {}, {}* {}",
+                        llvm_type_str, value_reg, llvm_type_str, llvm_name
+                    ));
                 }
 
                 value_reg
             }
 
-            AstNode::If { condition, then_block, else_block } => {
+            AstNode::If {
+                condition,
+                then_block,
+                else_block,
+            } => {
                 let cond_reg = self.gen_node(condition);
                 let then_label = self.new_label("then");
                 let else_label = self.new_label("else");
                 let end_label = self.new_label("endif");
 
                 if else_block.is_some() {
-                    self.emit(&format!("  br i1 {}, label %{}, label %{}", cond_reg, then_label, else_label));
+                    self.emit(&format!(
+                        "  br i1 {}, label %{}, label %{}",
+                        cond_reg, then_label, else_label
+                    ));
                 } else {
-                    self.emit(&format!("  br i1 {}, label %{}, label %{}", cond_reg, then_label, end_label));
+                    self.emit(&format!(
+                        "  br i1 {}, label %{}, label %{}",
+                        cond_reg, then_label, end_label
+                    ));
                 }
 
                 self.emit(&format!("{}:", then_label));
@@ -347,7 +415,10 @@ impl CodeGenerator {
 
                 self.emit(&format!("{}:", cond_label));
                 let cond_reg = self.gen_node(condition);
-                self.emit(&format!("  br i1 {}, label %{}, label %{}", cond_reg, body_label, end_label));
+                self.emit(&format!(
+                    "  br i1 {}, label %{}, label %{}",
+                    cond_reg, body_label, end_label
+                ));
 
                 self.emit(&format!("{}:", body_label));
                 self.block_terminated = false;
@@ -362,7 +433,11 @@ impl CodeGenerator {
                 "0".to_string()
             }
 
-            AstNode::For { variable, iterator, body } => {
+            AstNode::For {
+                variable,
+                iterator,
+                body,
+            } => {
                 let start_label = self.new_label("for_start");
                 let body_label = self.new_label("for_body");
                 let end_label = self.new_label("for_end");
@@ -376,13 +451,16 @@ impl CodeGenerator {
                 self.emit(&format!("  {} = alloca i64", loop_var));
                 self.emit(&format!("  store i64 0, i64* {}", loop_var));
 
-                self.current_function_vars.insert(variable.clone(), VarMetadata {
-                    llvm_name: loop_var.clone(),
-                    var_type: "int".to_string(),
-                    is_heap: false,
-                    array_size: None,
-                    is_string_literal: false
-                });
+                self.current_function_vars.insert(
+                    variable.clone(),
+                    VarMetadata {
+                        llvm_name: loop_var.clone(),
+                        var_type: "int".to_string(),
+                        is_heap: false,
+                        array_size: None,
+                        is_string_literal: false,
+                    },
+                );
 
                 self.emit(&format!("  br label %{}", start_label));
 
@@ -391,7 +469,10 @@ impl CodeGenerator {
                 self.emit(&format!("  {} = load i64, i64* {}", current, loop_var));
                 let cond = self.new_temp();
                 self.emit(&format!("  {} = icmp slt i64 {}, 10", cond, current));
-                self.emit(&format!("  br i1 {}, label %{}, label %{}", cond, body_label, end_label));
+                self.emit(&format!(
+                    "  br i1 {}, label %{}, label %{}",
+                    cond, body_label, end_label
+                ));
 
                 self.emit(&format!("{}:", body_label));
                 self.gen_node(body);
@@ -446,12 +527,13 @@ impl CodeGenerator {
                     last_reg = self.gen_node(stmt);
                 }
 
-                let vars_to_free: Vec<_> = self.current_function_vars
+                let vars_to_free: Vec<_> = self
+                    .current_function_vars
                     .iter()
                     .filter(|(name, meta)| {
-                        meta.is_heap 
-                        && !meta.is_string_literal
-                        && !vars_before.contains_key(name.as_str())
+                        meta.is_heap
+                            && !meta.is_string_literal
+                            && !vars_before.contains_key(name.as_str())
                     })
                     .map(|(_, meta)| meta.llvm_name.clone())
                     .collect();
@@ -477,63 +559,123 @@ impl CodeGenerator {
                             self.gen_string_concat(&left_reg, &right_reg)
                         } else {
                             let result = self.new_temp();
-                            self.emit(&format!("  {} = add i64 {}, {}", result, left_reg, right_reg));
+                            self.emit(&format!(
+                                "  {} = add i64 {}, {}",
+                                result, left_reg, right_reg
+                            ));
                             result
                         }
                     }
                     BinOp::Sub => {
                         let result = self.new_temp();
-                        self.emit(&format!("  {} = sub i64 {}, {}", result, left_reg, right_reg));
+                        self.emit(&format!(
+                            "  {} = sub i64 {}, {}",
+                            result, left_reg, right_reg
+                        ));
                         result
                     }
                     BinOp::Mul => {
                         let result = self.new_temp();
-                        self.emit(&format!("  {} = mul i64 {}, {}", result, left_reg, right_reg));
+                        self.emit(&format!(
+                            "  {} = mul i64 {}, {}",
+                            result, left_reg, right_reg
+                        ));
                         result
                     }
                     BinOp::Div => {
                         let result = self.new_temp();
-                        self.emit(&format!("  {} = sdiv i64 {}, {}", result, left_reg, right_reg));
+                        self.emit(&format!(
+                            "  {} = sdiv i64 {}, {}",
+                            result, left_reg, right_reg
+                        ));
                         result
                     }
                     BinOp::Mod => {
                         let result = self.new_temp();
-                        self.emit(&format!("  {} = srem i64 {}, {}", result, left_reg, right_reg));
+                        self.emit(&format!(
+                            "  {} = srem i64 {}, {}",
+                            result, left_reg, right_reg
+                        ));
                         result
                     }
                     BinOp::Equal => {
-                        let result = self.new_temp();
-                        self.emit(&format!("  {} = icmp eq i64 {}, {}", result, left_reg, right_reg));
-                        result
+                        if self.infer_llvm_type(left) == "string" {
+                            let cmp = self.new_temp();
+                            self.emit(&format!(
+                                "  {} = call i32 @strcmp(i8* {}, i8* {})",
+                                cmp, left_reg, right_reg
+                            ));
+
+                            let result = self.new_temp();
+                            self.emit(&format!("  {} = icmp eq i32 {}, 0", result, cmp));
+                            result
+                        } else {
+                            let result = self.new_temp();
+                            self.emit(&format!(
+                                "  {} = icmp eq i64 {}, {}",
+                                result, left_reg, right_reg
+                            ));
+
+                            result
+                        }
                     }
                     BinOp::NotEqual => {
-                        let result = self.new_temp();
-                        self.emit(&format!("  {} = icmp ne i64 {}, {}", result, left_reg, right_reg));
-                        result
+                        if self.infer_llvm_type(left) == "string" {
+                            let cmp = self.new_temp();
+                            self.emit(&format!(
+                                "  {} = call i32 @strcmp(i8* {}, i8* {})",
+                                cmp, left_reg, right_reg
+                            ));
+                            let result = self.new_temp();
+                            self.emit(&format!("  {} = icmp ne i32 {}, 0", result, cmp));
+                            result
+                        } else {
+                            let result = self.new_temp();
+                            self.emit(&format!(
+                                "  {} = icmp ne i64 {}, {}",
+                                result, left_reg, right_reg
+                            ));
+                            result
+                        }
                     }
                     BinOp::LessThan => {
                         let result = self.new_temp();
-                        self.emit(&format!("  {} = icmp slt i64 {}, {}", result, left_reg, right_reg));
+                        self.emit(&format!(
+                            "  {} = icmp slt i64 {}, {}",
+                            result, left_reg, right_reg
+                        ));
                         result
                     }
                     BinOp::LessEqual => {
                         let result = self.new_temp();
-                        self.emit(&format!("  {} = icmp sle i64 {}, {}", result, left_reg, right_reg));
+                        self.emit(&format!(
+                            "  {} = icmp sle i64 {}, {}",
+                            result, left_reg, right_reg
+                        ));
                         result
                     }
                     BinOp::GreaterThan => {
                         let result = self.new_temp();
-                        self.emit(&format!("  {} = icmp sgt i64 {}, {}", result, left_reg, right_reg));
+                        self.emit(&format!(
+                            "  {} = icmp sgt i64 {}, {}",
+                            result, left_reg, right_reg
+                        ));
                         result
                     }
                     BinOp::GreaterEqual => {
                         let result = self.new_temp();
-                        self.emit(&format!("  {} = icmp sge i64 {}, {}", result, left_reg, right_reg));
+                        self.emit(&format!(
+                            "  {} = icmp sge i64 {}, {}",
+                            result, left_reg, right_reg
+                        ));
                         result
                     }
                     BinOp::And => {
                         let result = self.new_temp();
-                        self.emit(&format!("  {} = and i1 {}, {}", result, left_reg, right_reg));
+                        self.emit(&format!(
+                            "  {} = and i1 {}, {}",
+                            result, left_reg, right_reg
+                        ));
                         result
                     }
                     BinOp::Or => {
@@ -562,13 +704,9 @@ impl CodeGenerator {
 
             AstNode::Number(n) => n.to_string(),
 
-            AstNode::Boolean(b) => {
-                if *b { "1" } else { "0" }.to_string()
-            }
+            AstNode::Boolean(b) => if *b { "1" } else { "0" }.to_string(),
 
-            AstNode::Character(c) => {
-                (*c as i64).to_string()
-            }
+            AstNode::Character(c) => (*c as i64).to_string(),
 
             AstNode::StringLit(s) => {
                 let id = self.new_string_literal(s);
@@ -594,8 +732,10 @@ impl CodeGenerator {
                 for (i, elem) in elements.iter().enumerate() {
                     let value = self.gen_node(elem);
                     let elem_ptr = self.new_temp();
-                    self.emit(&format!("  {} = getelementptr [{} x i64], [{} x i64]* {}, i64 0, i64 {}", 
-                        elem_ptr, size, size, ptr, i));
+                    self.emit(&format!(
+                        "  {} = getelementptr [{} x i64], [{} x i64]* {}, i64 0, i64 {}",
+                        elem_ptr, size, size, ptr, i
+                    ));
                     self.emit(&format!("  store i64 {}, i64* {}", value, elem_ptr));
                 }
 
@@ -621,8 +761,10 @@ impl CodeGenerator {
                 let elem_ptr = self.new_temp();
                 let result = self.new_temp();
 
-                self.emit(&format!("  {} = getelementptr [{} x i64], [{} x i64]* {}, i64 0, i64 {}", 
-                    elem_ptr, array_size, array_size, array_ptr, index_val));
+                self.emit(&format!(
+                    "  {} = getelementptr [{} x i64], [{} x i64]* {}, i64 0, i64 {}",
+                    elem_ptr, array_size, array_size, array_ptr, index_val
+                ));
                 self.emit(&format!("  {} = load i64, i64* {}", result, elem_ptr));
 
                 result
@@ -633,151 +775,182 @@ impl CodeGenerator {
                     let result = self.new_temp();
                     let llvm_type_str = self.type_to_llvm(&meta.var_type).to_string();
                     let llvm_name = meta.llvm_name.clone();
-                    self.emit(&format!("  {} = load {}, {}* {}", result, llvm_type_str, llvm_type_str, llvm_name));
+                    self.emit(&format!(
+                        "  {} = load {}, {}* {}",
+                        result, llvm_type_str, llvm_type_str, llvm_name
+                    ));
                     result
                 } else {
-                    eprintln!("CODEGEN ERROR: Variable '{}' not found in current scope!", name);
+                    eprintln!(
+                        "CODEGEN ERROR: Variable '{}' not found in current scope!",
+                        name
+                    );
                     "0".to_string()
                 }
             }
 
-            AstNode::Reference(expr) => {
-                match expr.as_ref() {
-                    AstNode::Identifier { name, .. } => {
-                        if let Some(meta) = self.current_function_vars.get(name).cloned() {
-                            if meta.var_type.starts_with('[') || meta.var_type == "array" {
-                                return meta.llvm_name;
-                            }
-                            meta.llvm_name
-                        } else {
-                            eprintln!("CODEGEN ERROR: Variable '{}' not found for reference!", name);
-                            "null".to_string()
+            AstNode::Reference(expr) => match expr.as_ref() {
+                AstNode::Identifier { name, .. } => {
+                    if let Some(meta) = self.current_function_vars.get(name).cloned() {
+                        if meta.var_type.starts_with('[') || meta.var_type == "array" {
+                            return meta.llvm_name;
                         }
-                    }
-                    _ => {
-                        self.gen_node(expr)
+                        meta.llvm_name
+                    } else {
+                        eprintln!(
+                            "CODEGEN ERROR: Variable '{}' not found for reference!",
+                            name
+                        );
+                        "null".to_string()
                     }
                 }
-            }
+                _ => self.gen_node(expr),
+            },
 
-            AstNode::Call { name, args } => {
-                match name.as_str() {
-                    "puts" if !args.is_empty() => {
-                        let arg_reg = self.gen_node(&args[0]);
-                        let result = self.new_temp();
-                        self.emit(&format!("  {} = call i32 @puts(i8* {})", result, arg_reg));
-                        result
-                    }
-                    "print_int" if !args.is_empty() => {
-                        let arg_reg = self.gen_node(&args[0]);
-                        let fmt = self.new_string_literal("%lld\n");
-                        let fmt_ptr = self.new_temp();
-                        self.emit(&format!("  {} = getelementptr inbounds [6 x i8], [6 x i8]* @{}, i64 0, i64 0", fmt_ptr, fmt));
-                        let result = self.new_temp();
-                        self.emit(&format!("  {} = call i32 (i8*, ...) @printf(i8* {}, i64 {})", result, fmt_ptr, arg_reg));
-                        result
-                    }
-                    "read_file" if !args.is_empty() => {
-                        let filename_reg = self.gen_node(&args[0]);
-                        let result = self.new_temp();
-                        self.emit(&format!("  {} = call i8* @read_file_impl(i8* {})", result, filename_reg));
-                        result
-                    }
-                    "write_file" if args.len() >= 2 => {
-                        let filename_reg = self.gen_node(&args[0]);
-                        let content_reg = self.gen_node(&args[1]);
-                        let result = self.new_temp();
-                        self.emit(&format!("  {} = call i32 @write_file_impl(i8* {}, i8* {})", result, filename_reg, content_reg));
-                        let result_i64 = self.new_temp();
-                        self.emit(&format!("  {} = sext i32 {} to i64", result_i64, result));
-                        result_i64
-                    }
-                    _ => {
-                        let mut arg_regs = Vec::new();
-                        let mut arg_types = Vec::new();
+            AstNode::Call { name, args } => match name.as_str() {
+                "puts" if !args.is_empty() => {
+                    let arg_reg = self.gen_node(&args[0]);
+                    let result = self.new_temp();
+                    self.emit(&format!("  {} = call i32 @puts(i8* {})", result, arg_reg));
+                    result
+                }
+                "print_int" if !args.is_empty() => {
+                    let arg_reg = self.gen_node(&args[0]);
+                    let fmt = self.new_string_literal("%lld\n");
+                    let fmt_ptr = self.new_temp();
+                    self.emit(&format!(
+                        "  {} = getelementptr inbounds [6 x i8], [6 x i8]* @{}, i64 0, i64 0",
+                        fmt_ptr, fmt
+                    ));
+                    let result = self.new_temp();
+                    self.emit(&format!(
+                        "  {} = call i32 (i8*, ...) @printf(i8* {}, i64 {})",
+                        result, fmt_ptr, arg_reg
+                    ));
+                    result
+                }
+                "read_file" if !args.is_empty() => {
+                    let filename_reg = self.gen_node(&args[0]);
+                    let result = self.new_temp();
+                    self.emit(&format!(
+                        "  {} = call i8* @read_file_impl(i8* {})",
+                        result, filename_reg
+                    ));
+                    result
+                }
+                "write_file" if args.len() >= 2 => {
+                    let filename_reg = self.gen_node(&args[0]);
+                    let content_reg = self.gen_node(&args[1]);
+                    let result = self.new_temp();
+                    self.emit(&format!(
+                        "  {} = call i32 @write_file_impl(i8* {}, i8* {})",
+                        result, filename_reg, content_reg
+                    ));
+                    let result_i64 = self.new_temp();
+                    self.emit(&format!("  {} = sext i32 {} to i64", result_i64, result));
+                    result_i64
+                }
+                _ => {
+                    let mut arg_regs = Vec::new();
+                    let mut arg_types = Vec::new();
 
-                        for arg_node in args {
-                            match arg_node {
-                                AstNode::Reference(inner) => {
-                                    match inner.as_ref() {
-                                        AstNode::Identifier { name: var_name, .. } => {
-                                            if let Some(meta) = self.current_function_vars.get(var_name) {
-                                                arg_regs.push(meta.llvm_name.clone());
+                    for arg_node in args {
+                        match arg_node {
+                            AstNode::Reference(inner) => match inner.as_ref() {
+                                AstNode::Identifier { name: var_name, .. } => {
+                                    if let Some(meta) = self.current_function_vars.get(var_name) {
+                                        arg_regs.push(meta.llvm_name.clone());
 
-                                                if let Some(size) = meta.array_size {
-                                                    arg_types.push(format!("[{} x i64]*", size));
-                                                } else {
-                                                    arg_types.push(format!("{}*", self.type_to_llvm(&meta.var_type)));
-                                                }
-                                            } else {
-                                                arg_regs.push("null".to_string());
-                                                arg_types.push("i8*".to_string());
-                                            }
+                                        if let Some(size) = meta.array_size {
+                                            arg_types.push(format!("[{} x i64]*", size));
+                                        } else {
+                                            arg_types.push(format!(
+                                                "{}*",
+                                                self.type_to_llvm(&meta.var_type)
+                                            ));
                                         }
-                                        _ => {
-                                            let reg = self.gen_node(inner);
-                                            arg_regs.push(reg);
-                                            arg_types.push("i8*".to_string());
-                                        }
+                                    } else {
+                                        arg_regs.push("null".to_string());
+                                        arg_types.push("i8*".to_string());
                                     }
                                 }
                                 _ => {
-                                    let reg = self.gen_node(arg_node);
-                                    let arg_type = self.infer_llvm_type(arg_node);
+                                    let reg = self.gen_node(inner);
                                     arg_regs.push(reg);
-                                    arg_types.push(self.type_to_llvm(&arg_type).to_string());
+                                    arg_types.push("i8*".to_string());
                                 }
+                            },
+                            _ => {
+                                let reg = self.gen_node(arg_node);
+                                let arg_type = self.infer_llvm_type(arg_node);
+                                arg_regs.push(reg);
+                                arg_types.push(self.type_to_llvm(&arg_type).to_string());
                             }
                         }
-
-                        let args_str = arg_types.iter()
-                            .zip(&arg_regs)
-                            .map(|(ty, reg)| format!("{} {}", ty, reg))
-                            .collect::<Vec<_>>()
-                            .join(", ");
-
-                        let return_type = self.function_signatures.get(name)
-                            .cloned()
-                            .unwrap_or_else(|| "i64".to_string());
-
-                        let result = self.new_temp();
-                        self.emit(&format!("  {} = call {} @{}({})", result, return_type, name, args_str));
-                        result
                     }
+
+                    let args_str = arg_types
+                        .iter()
+                        .zip(&arg_regs)
+                        .map(|(ty, reg)| format!("{} {}", ty, reg))
+                        .collect::<Vec<_>>()
+                        .join(", ");
+
+                    let return_type = self
+                        .function_signatures
+                        .get(name)
+                        .cloned()
+                        .unwrap_or_else(|| "i64".to_string());
+
+                    let result = self.new_temp();
+                    self.emit(&format!(
+                        "  {} = call {} @{}({})",
+                        result, return_type, name, args_str
+                    ));
+                    result
                 }
-            }
+            },
 
-            AstNode::MethodCall { object, method, args } => {
-                match method.as_str() {
-                    "len" => {
-                        let obj_reg = self.gen_node(object);
-                        let result = self.new_temp();
-                        self.emit(&format!("  {} = call i64 @strlen(i8* {})", result, obj_reg));
-                        result
-                    }
-                    "char_at" if !args.is_empty() => {
-                        let obj_reg = self.gen_node(object);
-                        let index_reg = self.gen_node(&args[0]);
-                        let char_ptr = self.new_temp();
-                        self.emit(&format!("  {} = getelementptr i8, i8* {}, i64 {}", char_ptr, obj_reg, index_reg));
-                        let result = self.new_temp();
-                        self.emit(&format!("  {} = load i8, i8* {}", result, char_ptr));
-                        let extended = self.new_temp();
-                        self.emit(&format!("  {} = sext i8 {} to i64", extended, result));
-                        extended
-                    }
-                    "push" if !args.is_empty() => {
-                        "0".to_string()
-                    }
-                    _ => "0".to_string(),
+            AstNode::MethodCall {
+                object,
+                method,
+                args,
+            } => match method.as_str() {
+                "len" => {
+                    let obj_reg = self.gen_node(object);
+                    let result = self.new_temp();
+                    self.emit(&format!("  {} = call i64 @strlen(i8* {})", result, obj_reg));
+                    result
                 }
-            }
+                "char_at" if !args.is_empty() => {
+                    let obj_reg = self.gen_node(object);
+                    let index_reg = self.gen_node(&args[0]);
+                    let char_ptr = self.new_temp();
+                    self.emit(&format!(
+                        "  {} = getelementptr i8, i8* {}, i64 {}",
+                        char_ptr, obj_reg, index_reg
+                    ));
+                    let result = self.new_temp();
+                    self.emit(&format!("  {} = load i8, i8* {}", result, char_ptr));
+                    let extended = self.new_temp();
+                    self.emit(&format!("  {} = sext i8 {} to i64", extended, result));
+                    extended
+                }
+                "push" if !args.is_empty() => "0".to_string(),
+                _ => "0".to_string(),
+            },
 
             _ => "0".to_string(),
         }
     }
 
-    fn gen_function(&mut self, name: &str, params: &[Parameter], body: &AstNode, return_type: &Option<String>) -> String {
+    fn gen_function(
+        &mut self,
+        name: &str,
+        params: &[Parameter],
+        body: &AstNode,
+        return_type: &Option<String>,
+    ) -> String {
         self.current_function_vars.clear();
         self.temp_counter = 0;
 
@@ -789,19 +962,26 @@ impl CodeGenerator {
             "void".to_string()
         };
 
-        self.function_signatures.insert(name.to_string(), ret_type.clone());
+        self.function_signatures
+            .insert(name.to_string(), ret_type.clone());
         self.current_function_name = name.to_string();
         self.current_function_return_type = ret_type.clone();
 
         let param_list = if params.is_empty() {
             String::new()
         } else {
-            params.iter()
+            params
+                .iter()
                 .map(|p| {
                     let param_type_str = if p.is_reference {
                         if p.param_type.starts_with('[') {
                             if let Some(size_str) = p.param_type.split(';').nth(1) {
-                                let size = size_str.trim().trim_end_matches(']').trim().parse::<usize>().unwrap_or(100);
+                                let size = size_str
+                                    .trim()
+                                    .trim_end_matches(']')
+                                    .trim()
+                                    .parse::<usize>()
+                                    .unwrap_or(100);
                                 format!("[{} x i64]*", size)
                             } else {
                                 "i64*".to_string()
@@ -819,7 +999,10 @@ impl CodeGenerator {
                 .join(", ")
         };
 
-        self.emit(&format!("\ndefine {} @{}({}) {{", ret_type, name, param_list));
+        self.emit(&format!(
+            "\ndefine {} @{}({}) {{",
+            ret_type, name, param_list
+        ));
         self.emit("entry:");
 
         for param in params {
@@ -828,7 +1011,12 @@ impl CodeGenerator {
 
                 let array_size = if param.param_type.starts_with('[') {
                     if let Some(size_str) = param.param_type.split(';').nth(1) {
-                        size_str.trim().trim_end_matches(']').trim().parse::<usize>().ok()
+                        size_str
+                            .trim()
+                            .trim_end_matches(']')
+                            .trim()
+                            .parse::<usize>()
+                            .ok()
                     } else {
                         None
                     }
@@ -836,28 +1024,37 @@ impl CodeGenerator {
                     None
                 };
 
-                self.current_function_vars.insert(param.name.clone(), VarMetadata {
-                    llvm_name: format!("%arg_{}", param.name),
-                    var_type: param_type_name,
-                    is_heap: false,
-                    array_size,
-                    is_string_literal: false,
-                });
+                self.current_function_vars.insert(
+                    param.name.clone(),
+                    VarMetadata {
+                        llvm_name: format!("%arg_{}", param.name),
+                        var_type: param_type_name,
+                        is_heap: false,
+                        array_size,
+                        is_string_literal: false,
+                    },
+                );
             } else {
                 let param_type_str = self.type_to_llvm(&param.param_type).to_string();
                 let param_type_name = param.param_type.clone();
 
                 let ptr = self.new_temp();
                 self.emit(&format!("  {} = alloca {}", ptr, param_type_str));
-                self.emit(&format!("  store {} %arg_{}, {}* {}", param_type_str, param.name, param_type_str, ptr));
+                self.emit(&format!(
+                    "  store {} %arg_{}, {}* {}",
+                    param_type_str, param.name, param_type_str, ptr
+                ));
 
-                self.current_function_vars.insert(param.name.clone(), VarMetadata {
-                    llvm_name: ptr,
-                    var_type: param_type_name,
-                    is_heap: false,
-                    array_size: None,
-                    is_string_literal: false,
-                });
+                self.current_function_vars.insert(
+                    param.name.clone(),
+                    VarMetadata {
+                        llvm_name: ptr,
+                        var_type: param_type_name,
+                        is_heap: false,
+                        array_size: None,
+                        is_string_literal: false,
+                    },
+                );
             }
         }
 
@@ -885,16 +1082,28 @@ impl CodeGenerator {
         self.emit(&format!("  {} = add i64 {}, 1", total_plus_one, total));
 
         let new_ptr = self.new_temp();
-        self.emit(&format!("  {} = call i8* @malloc(i64 {})", new_ptr, total_plus_one));
+        self.emit(&format!(
+            "  {} = call i8* @malloc(i64 {})",
+            new_ptr, total_plus_one
+        ));
 
         let temp1 = self.new_temp();
-        self.emit(&format!("  {} = call i8* @strcpy(i8* {}, i8* {})", temp1, new_ptr, left));
+        self.emit(&format!(
+            "  {} = call i8* @strcpy(i8* {}, i8* {})",
+            temp1, new_ptr, left
+        ));
 
         let offset_ptr = self.new_temp();
-        self.emit(&format!("  {} = getelementptr i8, i8* {}, i64 {}", offset_ptr, new_ptr, len1));
+        self.emit(&format!(
+            "  {} = getelementptr i8, i8* {}, i64 {}",
+            offset_ptr, new_ptr, len1
+        ));
 
         let temp2 = self.new_temp();
-        self.emit(&format!("  {} = call i8* @strcpy(i8* {}, i8* {})", temp2, offset_ptr, right));
+        self.emit(&format!(
+            "  {} = call i8* @strcpy(i8* {}, i8* {})",
+            temp2, offset_ptr, right
+        ));
 
         new_ptr
     }
@@ -906,23 +1115,20 @@ impl CodeGenerator {
             AstNode::Character(_) => "char".to_string(),
             AstNode::StringLit(_) => "string".to_string(),
             AstNode::BinaryOp { left, .. } => self.infer_llvm_type(left),
-            AstNode::Identifier { name, .. } => {
-                self.current_function_vars
-                    .get(name)
-                    .map(|m| m.var_type.clone())
-                    .unwrap_or_else(|| "int".to_string())
-            }
+            AstNode::Identifier { name, .. } => self
+                .current_function_vars
+                .get(name)
+                .map(|m| m.var_type.clone())
+                .unwrap_or_else(|| "int".to_string()),
             AstNode::ArrayLit(_) => "array".to_string(),
             AstNode::EnumValue { .. } => "enum".to_string(),
-            AstNode::Call { name, .. } => {
-                match name.as_str() {
-                    "read_file" => "string".to_string(),
-                    "write_file" => "int".to_string(),
-                    "puts" => "int".to_string(),
-                    "print_int" => "int".to_string(),
-                    _ => "int".to_string(),
-                }
-            }
+            AstNode::Call { name, .. } => match name.as_str() {
+                "read_file" => "string".to_string(),
+                "write_file" => "int".to_string(),
+                "puts" => "int".to_string(),
+                "print_int" => "int".to_string(),
+                _ => "int".to_string(),
+            },
             _ => "int".to_string(),
         }
     }
@@ -965,21 +1171,26 @@ impl CodeGenerator {
 
     fn escape_string(&self, s: &str) -> String {
         let mut escaped = String::new();
-        for c in s.bytes() { 
+        for c in s.bytes() {
             match c {
-                b'\n' => escaped.push_str("\\0A"), 
-                b'\r' => escaped.push_str("\\0D"), 
-                b'\t' => escaped.push_str("\\09"), 
-                b'\\' => escaped.push_str("\\5C"), 
-                b'\"' => escaped.push_str("\\22"), 
-                32..=126 => escaped.push(c as char), 
-                _ => escaped.push_str(&format!("\\{:02x}", c)), 
+                b'\n' => escaped.push_str("\\0A"),
+                b'\r' => escaped.push_str("\\0D"),
+                b'\t' => escaped.push_str("\\09"),
+                b'\\' => escaped.push_str("\\5C"),
+                b'\"' => escaped.push_str("\\22"),
+                32..=126 => escaped.push(c as char),
+                _ => escaped.push_str(&format!("\\{:02x}", c)),
             }
         }
         escaped
     }
 
     fn build_output(&self) -> String {
-        self.output.clone()
+        format!(
+            "target triple = \"{}\"\n\n{}",
+            get_target_triple(),
+            self.output
+        )
     }
 }
+
