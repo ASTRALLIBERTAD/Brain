@@ -1085,9 +1085,9 @@ impl CodeGenerator {
 
         self.gen_node(body);
 
-        if name == "main" {
+        if name == "main" && !self.block_terminated {
             self.emit("  ret i32 0");
-        } else if return_type.is_none() {
+        } else if return_type.is_none() && !self.block_terminated {
             self.emit("  ret void");
         }
 

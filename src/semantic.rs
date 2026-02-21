@@ -228,8 +228,21 @@ impl<'a> SemanticAnalyzer<'a> {
 
             AstNode::BinaryOp { left, right, op } => {
                 self.visit(left)?;
+                if matches!(op, BinOp::Add) {
+                    if let AstNode::Identifier { name: var, .. } = left.as_ref() {
+                        if self.get_type(var) == Some("string") {
+                            self.consume_variable(var)?;
+                        }
+                    }
+                }
                 self.visit(right)?;
-
+                if matches!(op, BinOp::Add) {
+                    if let AstNode::Identifier { name: var, .. } = right.as_ref() {
+                        if self.get_type(var) == Some("string") {
+                            self.consume_variable(var)?;
+                        }
+                    }
+                }
                 if matches!(op, BinOp::Add) {
                     if let AstNode::Identifier { name: var, .. } = left.as_ref() {
                         if self.get_type(var) == Some("string") {
