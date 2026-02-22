@@ -44,7 +44,6 @@ fn get_output_filename(base: &str) -> String {
 fn compile_file(input_file: &str, output_file: &str) {
     println!("Compiling {}...", input_file);
 
-    // Read source file
     let source = match fs::read_to_string(input_file) {
         Ok(content) => content,
         Err(e) => {
@@ -53,7 +52,6 @@ fn compile_file(input_file: &str, output_file: &str) {
         }
     };
 
-    // Step 1: Lexical Analysis
     println!("  [1/5] Lexical analysis...");
     let mut lexer = Lexer::new(&source, input_file);
     let tokens = match lexer.tokenize() {
@@ -64,7 +62,6 @@ fn compile_file(input_file: &str, output_file: &str) {
         }
     };
 
-    // Step 2: Parsing
     println!("  [2/5] Parsing...");
     let mut parser = Parser::new(tokens, input_file);
     let ast = match parser.parse() {
@@ -75,7 +72,6 @@ fn compile_file(input_file: &str, output_file: &str) {
         }
     };
 
-    // Step 3: Module resolution
     println!("  [3/5] Resolving imports...");
     let mut cache = ModuleCache::new();
     let ast = match resolve_imports(ast, &mut cache, input_file) {
@@ -86,7 +82,6 @@ fn compile_file(input_file: &str, output_file: &str) {
         }
     };
 
-    // Step 4: Semantic Analysis (Ownership & Memory Safety)
     println!("  [4/5] Semantic analysis (ownership checking)...");
     let mut analyzer = SemanticAnalyzer::new(input_file);
     if let Err(e) = analyzer.analyze(&ast) {
@@ -94,12 +89,10 @@ fn compile_file(input_file: &str, output_file: &str) {
         process::exit(1);
     }
 
-    // Step 5: Code Generation
     println!("  [5/5] Code generation...");
     let mut codegen = CodeGenerator::new();
     let llvm_ir = codegen.generate(&ast);
 
-    // Write LLVM IR to file
     let ll_file = format!("{}.ll", output_file);
     let output_exe = get_output_filename(output_file);
 
@@ -109,8 +102,6 @@ fn compile_file(input_file: &str, output_file: &str) {
     }
 
     println!("  Generated LLVM IR: {}", ll_file);
-
-    // Compile LLVM IR to executable using clang
     println!("  Linking to executable: {}", output_exe);
 
     let mut cmd = process::Command::new("clang");
@@ -118,6 +109,18 @@ fn compile_file(input_file: &str, output_file: &str) {
         .arg("-o")
         .arg(&output_exe)
         .arg("-Wno-override-module");
+
+    #[cfg(target_os = "windows")]
+    {
+        cmd.arg("-fuse-ld=lld");
+        cmd.arg("-lkernel32");
+        cmd.arg("-lmsvcrt");
+    }
+
+    #[cfg(target_os = "linux")]
+    {
+        cmd.arg("-static");
+    }
 
     match cmd.output() {
         Ok(result) => {

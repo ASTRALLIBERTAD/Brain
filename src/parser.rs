@@ -189,6 +189,8 @@ pub enum Pattern {
         variant: String,
         binding: Option<String>,
     },
+    NumberPattern(i64),
+    StringPattern(String),
     Wildcard,
 }
 
@@ -242,7 +244,6 @@ impl<'a> Parser<'a> {
                     break;
                 }
                 self.advance();
-                // Allow trailing comma: `import { a, b, }` is valid
                 if self.check(&TokenType::RBrace) {
                     break;
                 }
@@ -427,6 +428,11 @@ impl<'a> Parser<'a> {
                 self.advance();
                 Ok("char".to_string())
             }
+            TokenType::Ampersand => {
+                self.advance();
+                let inner = self.parse_type()?;
+                Ok(format!("&{}", inner))
+            }
             TokenType::LBracket => {
                 self.advance();
                 let elem_type = self.parse_type()?;
@@ -446,7 +452,11 @@ impl<'a> Parser<'a> {
             TokenType::Identifier(name) => {
                 let name = name.clone();
                 self.advance();
-                Ok(name)
+                if name == "Vec" {
+                    Ok("vec".to_string())
+                } else {
+                    Ok(name)
+                }
             }
             _ => Err(self.error("Expected type")),
         }
@@ -680,36 +690,57 @@ impl<'a> Parser<'a> {
     }
 
     fn parse_pattern(&mut self) -> Result<Pattern, String> {
-        if self.check_identifier() {
-            let first = self.consume_identifier("Expected identifier")?;
-
-            if self.check(&TokenType::Colon) && self.peek_ahead(1).token_type == TokenType::Colon {
+        match self.peek().token_type.clone() {
+            TokenType::Number(n) => {
                 self.advance();
-                self.advance();
-                let variant = self.consume_identifier("Expected variant name")?;
-
-                let binding = if self.check(&TokenType::LParen) {
-                    self.advance();
-                    let b = self.consume_identifier("Expected binding")?;
-                    self.consume(&TokenType::RParen, "Expected ')'")?;
-                    Some(b)
-                } else {
-                    None
-                };
-
-                Ok(Pattern::EnumPattern {
-                    enum_name: first,
-                    variant,
-                    binding,
-                })
-            } else {
-                Ok(Pattern::Identifier(first))
+                Ok(Pattern::NumberPattern(n))
             }
-        } else if self.check(&TokenType::Identifier("_".to_string())) {
-            self.advance();
-            Ok(Pattern::Wildcard)
-        } else {
-            Err(self.error("Expected pattern"))
+            TokenType::Minus => {
+                self.advance();
+                if let TokenType::Number(n) = self.peek().token_type {
+                    self.advance();
+                    Ok(Pattern::NumberPattern(-n))
+                } else {
+                    Err(self.error("Expected number after '-' in pattern"))
+                }
+            }
+            TokenType::StringLit(s) => {
+                self.advance();
+                Ok(Pattern::StringPattern(s))
+            }
+            TokenType::Identifier(_) => {
+                let first = self.consume_identifier("Expected identifier")?;
+
+                if first == "_" {
+                    return Ok(Pattern::Wildcard);
+                }
+
+                if self.check(&TokenType::Colon)
+                    && self.peek_ahead(1).token_type == TokenType::Colon
+                {
+                    self.advance();
+                    self.advance();
+                    let variant = self.consume_identifier("Expected variant name")?;
+
+                    let binding = if self.check(&TokenType::LParen) {
+                        self.advance();
+                        let b = self.consume_identifier("Expected binding")?;
+                        self.consume(&TokenType::RParen, "Expected ')'")?;
+                        Some(b)
+                    } else {
+                        None
+                    };
+
+                    Ok(Pattern::EnumPattern {
+                        enum_name: first,
+                        variant,
+                        binding,
+                    })
+                } else {
+                    Ok(Pattern::Identifier(first))
+                }
+            }
+            _ => Err(self.error("Expected pattern")),
         }
     }
 
@@ -843,7 +874,7 @@ impl<'a> Parser<'a> {
     }
 
     fn parse_term(&mut self) -> Result<AstNode, String> {
-        let mut left = self.parse_factor()?;
+        let mut left = self.parse_unary()?;
 
         while self.check(&TokenType::Star)
             || self.check(&TokenType::Slash)
@@ -860,7 +891,7 @@ impl<'a> Parser<'a> {
                 BinOp::Mod
             };
 
-            let right = self.parse_factor()?;
+            let right = self.parse_unary()?;
             left = AstNode::BinaryOp {
                 op,
                 left: Box::new(left),
@@ -869,6 +900,28 @@ impl<'a> Parser<'a> {
         }
 
         Ok(left)
+    }
+
+    fn parse_unary(&mut self) -> Result<AstNode, String> {
+        if self.check(&TokenType::Minus) {
+            self.advance();
+            let operand = self.parse_unary()?;
+            return Ok(AstNode::UnaryOp {
+                op: UnOp::Negate,
+                operand: Box::new(operand),
+            });
+        }
+
+        if self.check(&TokenType::Not) {
+            self.advance();
+            let operand = self.parse_unary()?;
+            return Ok(AstNode::UnaryOp {
+                op: UnOp::Not,
+                operand: Box::new(operand),
+            });
+        }
+
+        self.parse_factor()
     }
 
     fn parse_factor(&mut self) -> Result<AstNode, String> {
@@ -993,9 +1046,14 @@ impl<'a> Parser<'a> {
 
                     let value = if self.check(&TokenType::LParen) {
                         self.advance();
-                        let v = self.parse_expression()?;
-                        self.consume(&TokenType::RParen, "Expected ')'")?;
-                        Some(Box::new(v))
+                        if self.check(&TokenType::RParen) {
+                            self.advance();
+                            None
+                        } else {
+                            let v = self.parse_expression()?;
+                            self.consume(&TokenType::RParen, "Expected ')'")?;
+                            Some(Box::new(v))
+                        }
                     } else {
                         None
                     };

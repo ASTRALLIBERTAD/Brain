@@ -54,7 +54,6 @@ impl<'a> SemanticAnalyzer<'a> {
 
             AstNode::FunctionDef { params, body, .. } => {
                 self.push_scope();
-
                 for param in params {
                     self.declare_variable(
                         &param.name,
@@ -63,7 +62,6 @@ impl<'a> SemanticAnalyzer<'a> {
                         0,
                     );
                 }
-
                 self.visit(body)?;
                 self.pop_scope();
                 Ok(())
@@ -79,18 +77,14 @@ impl<'a> SemanticAnalyzer<'a> {
             } => {
                 self.current_line = location.line;
                 self.current_column = location.column;
-
                 self.visit(value)?;
-
                 if let AstNode::Identifier { name: var_name, .. } = value.as_ref() {
                     self.check_not_consumed(var_name)?;
                     self.consume_variable(var_name)?;
                 }
-
                 let var_type = type_annotation
                     .clone()
                     .unwrap_or_else(|| self.infer_type(value));
-
                 self.declare_variable(name, *mutable, var_type, location.line);
                 Ok(())
             }
@@ -102,18 +96,15 @@ impl<'a> SemanticAnalyzer<'a> {
             } => {
                 self.current_line = location.line;
                 self.current_column = location.column;
-
                 self.check_variable_exists(name)?;
                 self.check_not_consumed(name)?;
                 self.check_is_mutable(name)?;
                 self.check_not_borrowed(name)?;
                 self.visit(value)?;
-
                 if let AstNode::Identifier { name: var_name, .. } = value.as_ref() {
                     self.check_not_consumed(var_name)?;
                     self.consume_variable(var_name)?;
                 }
-
                 Ok(())
             }
 
@@ -125,7 +116,6 @@ impl<'a> SemanticAnalyzer<'a> {
             } => {
                 self.current_line = location.line;
                 self.current_column = location.column;
-
                 self.check_variable_exists(array)?;
                 self.check_not_consumed(array)?;
                 self.check_is_mutable(array)?;
@@ -172,14 +162,11 @@ impl<'a> SemanticAnalyzer<'a> {
             } => {
                 self.visit(iterator)?;
                 self.push_scope();
-
                 self.declare_variable(variable, false, "int".to_string(), self.current_line);
-
                 let was_in_loop = self.in_loop;
                 self.in_loop = true;
                 self.visit(body)?;
                 self.in_loop = was_in_loop;
-
                 self.pop_scope();
                 Ok(())
             }
@@ -187,7 +174,9 @@ impl<'a> SemanticAnalyzer<'a> {
             AstNode::Match { value, arms } => {
                 self.visit(value)?;
                 for arm in arms {
+                    self.push_scope();
                     self.visit(&arm.body)?;
+                    self.pop_scope();
                 }
                 Ok(())
             }
@@ -230,7 +219,6 @@ impl<'a> SemanticAnalyzer<'a> {
                         }
                     }
                 }
-
                 self.visit(right)?;
                 if matches!(op, BinOp::Add) {
                     if let AstNode::Identifier { name: var, .. } = right.as_ref() {
@@ -239,7 +227,6 @@ impl<'a> SemanticAnalyzer<'a> {
                         }
                     }
                 }
-
                 Ok(())
             }
 
@@ -251,7 +238,6 @@ impl<'a> SemanticAnalyzer<'a> {
             AstNode::Identifier { name, location } => {
                 self.current_line = location.line;
                 self.current_column = location.column;
-
                 self.check_variable_exists(name)?;
                 self.check_not_consumed(name)?;
                 Ok(())
@@ -263,15 +249,20 @@ impl<'a> SemanticAnalyzer<'a> {
                     self.borrow_variable(var_name)?;
                 }
                 self.visit(expr)?;
+                if let AstNode::Identifier { name: var_name, .. } = expr.as_ref() {
+                    self.release_borrow(var_name);
+                }
                 Ok(())
             }
 
             AstNode::Call { name: _, args } => {
+                let mut borrowed_vars: Vec<String> = Vec::new();
                 for arg in args.iter() {
                     if let AstNode::Reference(ref_expr) = arg {
                         if let AstNode::Identifier { name: var_name, .. } = ref_expr.as_ref() {
                             self.check_not_consumed(var_name)?;
                             self.borrow_variable(var_name)?;
+                            borrowed_vars.push(var_name.clone());
                         }
                     } else {
                         self.visit(arg)?;
@@ -282,6 +273,9 @@ impl<'a> SemanticAnalyzer<'a> {
                             }
                         }
                     }
+                }
+                for var_name in &borrowed_vars {
+                    self.release_borrow(var_name);
                 }
                 Ok(())
             }
@@ -361,7 +355,6 @@ impl<'a> SemanticAnalyzer<'a> {
         if self.is_copy_type(name) {
             return Ok(());
         }
-
         if let Some(info) = self.lookup_variable(name) {
             if info.is_consumed {
                 return Err(format!(
@@ -406,7 +399,6 @@ impl<'a> SemanticAnalyzer<'a> {
         if self.is_copy_type(name) {
             return Ok(());
         }
-
         for scope in self.symbol_table.iter_mut().rev() {
             if let Some(info) = scope.get_mut(name) {
                 if info.borrow_count > 0 {
@@ -430,6 +422,17 @@ impl<'a> SemanticAnalyzer<'a> {
             }
         }
         Ok(())
+    }
+
+    fn release_borrow(&mut self, name: &str) {
+        for scope in self.symbol_table.iter_mut().rev() {
+            if let Some(info) = scope.get_mut(name) {
+                if info.borrow_count > 0 {
+                    info.borrow_count -= 1;
+                }
+                return;
+            }
+        }
     }
 
     fn lookup_variable(&self, name: &str) -> Option<&VarInfo> {

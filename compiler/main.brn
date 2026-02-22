@@ -1,5 +1,8 @@
-import { add } from "math.brn";
+import { internal_only, add } from "math.brn";
 
 fn main() {
+    print("HI");
     print(add(3, 4));
+    print("Kk");
+    print(internal_only());
 }
