@@ -280,25 +280,256 @@ impl CodeGenerator {
             self.emit("}");
             self.emit("");
         } else {
-            // Unix: declare standard libc functions
-            self.emit("declare i32 @puts(i8*)");
-            self.emit("declare i32 @strcmp(i8*, i8*)");
-            self.emit("declare i8* @malloc(i64)");
-            self.emit("declare i8* @realloc(i8*, i64)");
-            self.emit("declare void @free(i8*)");
-            self.emit("declare i8* @strcpy(i8*, i8*)");
-            self.emit("declare i64 @strlen(i8*)");
-            self.emit("declare i32 @printf(i8*, ...)");
-            self.emit("declare i8* @fopen(i8*, i8*)");
-            self.emit("declare i32 @fclose(i8*)");
-            self.emit("declare i64 @fread(i8*, i64, i64, i8*)");
-            self.emit("declare i64 @fwrite(i8*, i64, i64, i8*)");
-            self.emit("declare i32 @fseek(i8*, i64, i32)");
-            self.emit("declare i64 @ftell(i8*)");
+            // Linux: raw syscalls — zero libc dependency
+            // syscall(SYS_brk) based bump allocator
+            self.emit("declare i64 @syscall(i64, ...)");
+            self.emit("");
+
+            // brk-based malloc: grow heap with SYS_brk (syscall 12 on x86-64)
+            self.emit("@brn_heap_end = global i8* null");
+            self.emit("@brn_heap_start = global i8* null");
+            self.emit("");
+
+            self.emit("define i8* @malloc(i64 %size) {");
+            self.emit("  %cur = load i8*, i8** @brn_heap_end");
+            self.emit("  %is_null = icmp eq i8* %cur, null");
+            self.emit("  br i1 %is_null, label %init, label %alloc");
+            self.emit("init:");
+            // SYS_brk(0) returns current brk
+            self.emit("  %brk0 = call i64 (i64, ...) @syscall(i64 12, i64 0)");
+            self.emit("  %start = inttoptr i64 %brk0 to i8*");
+            self.emit("  store i8* %start, i8** @brn_heap_start");
+            self.emit("  store i8* %start, i8** @brn_heap_end");
+            self.emit("  br label %alloc");
+            self.emit("alloc:");
+            self.emit("  %base = load i8*, i8** @brn_heap_end");
+            self.emit("  %base_i = ptrtoint i8* %base to i64");
+            // align to 8 bytes
+            self.emit("  %align7 = add i64 %size, 7");
+            self.emit("  %aligned = and i64 %align7, -8");
+            self.emit("  %new_end_i = add i64 %base_i, %aligned");
+            self.emit("  %new_end = inttoptr i64 %new_end_i to i8*");
+            // SYS_brk(new_end) to extend heap
+            self.emit("  call i64 (i64, ...) @syscall(i64 12, i64 %new_end_i)");
+            self.emit("  store i8* %new_end, i8** @brn_heap_end");
+            self.emit("  ret i8* %base");
+            self.emit("}");
+            self.emit("");
+
+            // realloc: alloc new, copy, return (bump allocator — no free)
+            self.emit("define i8* @realloc(i8* %ptr, i64 %size) {");
+            self.emit("  %new = call i8* @malloc(i64 %size)");
+            // copy old data (best-effort, copy %size bytes from old ptr)
+            self.emit("  br label %rc_loop");
+            self.emit("rc_loop:");
+            self.emit("  %rc_i = phi i64 [ 0, %0 ], [ %rc_next, %rc_loop ]");
+            self.emit("  %rc_done = icmp eq i64 %rc_i, %size");
+            self.emit("  br i1 %rc_done, label %rc_exit, label %rc_copy");
+            self.emit("rc_copy:");
+            self.emit("  %rc_sp = getelementptr i8, i8* %ptr, i64 %rc_i");
+            self.emit("  %rc_dp = getelementptr i8, i8* %new, i64 %rc_i");
+            self.emit("  %rc_byte = load i8, i8* %rc_sp");
+            self.emit("  store i8 %rc_byte, i8* %rc_dp");
+            self.emit("  %rc_next = add i64 %rc_i, 1");
+            self.emit("  br label %rc_loop");
+            self.emit("rc_exit:");
+            self.emit("  ret i8* %new");
+            self.emit("}");
+            self.emit("");
+
+            // free: no-op with bump allocator
+            self.emit("define void @free(i8* %ptr) {");
+            self.emit("  ret void");
+            self.emit("}");
+            self.emit("");
+
+            // strlen — pure IR
+            self.emit("define i64 @strlen(i8* %s) {");
+            self.emit("sl_entry:");
+            self.emit("  br label %sl_loop");
+            self.emit("sl_loop:");
+            self.emit("  %sl_i = phi i64 [ 0, %sl_entry ], [ %sl_next, %sl_loop ]");
+            self.emit("  %sl_p = getelementptr i8, i8* %s, i64 %sl_i");
+            self.emit("  %sl_c = load i8, i8* %sl_p");
+            self.emit("  %sl_done = icmp eq i8 %sl_c, 0");
+            self.emit("  %sl_next = add i64 %sl_i, 1");
+            self.emit("  br i1 %sl_done, label %sl_exit, label %sl_loop");
+            self.emit("sl_exit:");
+            self.emit("  ret i64 %sl_i");
+            self.emit("}");
+            self.emit("");
+
+            // strcmp — pure IR
+            self.emit("define i32 @strcmp(i8* %a, i8* %b) {");
+            self.emit("sc_entry:");
+            self.emit("  br label %sc_loop");
+            self.emit("sc_loop:");
+            self.emit("  %sc_i = phi i64 [ 0, %sc_entry ], [ %sc_next, %sc_cont ]");
+            self.emit("  %sc_pa = getelementptr i8, i8* %a, i64 %sc_i");
+            self.emit("  %sc_pb = getelementptr i8, i8* %b, i64 %sc_i");
+            self.emit("  %sc_ca = load i8, i8* %sc_pa");
+            self.emit("  %sc_cb = load i8, i8* %sc_pb");
+            self.emit("  %sc_za = icmp eq i8 %sc_ca, 0");
+            self.emit("  %sc_zb = icmp eq i8 %sc_cb, 0");
+            self.emit("  %sc_end = or i1 %sc_za, %sc_zb");
+            self.emit("  br i1 %sc_end, label %sc_exit, label %sc_cont");
+            self.emit("sc_cont:");
+            self.emit("  %sc_eq = icmp eq i8 %sc_ca, %sc_cb");
+            self.emit("  %sc_next = add i64 %sc_i, 1");
+            self.emit("  br i1 %sc_eq, label %sc_loop, label %sc_diff");
+            self.emit("sc_diff:");
+            self.emit("  %sc_da = sext i8 %sc_ca to i32");
+            self.emit("  %sc_db = sext i8 %sc_cb to i32");
+            self.emit("  %sc_r = sub i32 %sc_da, %sc_db");
+            self.emit("  ret i32 %sc_r");
+            self.emit("sc_exit:");
+            self.emit("  %sc_fa = sext i8 %sc_ca to i32");
+            self.emit("  %sc_fb = sext i8 %sc_cb to i32");
+            self.emit("  %sc_fr = sub i32 %sc_fa, %sc_fb");
+            self.emit("  ret i32 %sc_fr");
+            self.emit("}");
+            self.emit("");
+
+            // strcpy — pure IR
+            self.emit("define i8* @strcpy(i8* %dst, i8* %src) {");
+            self.emit("sy_entry:");
+            self.emit("  br label %sy_loop");
+            self.emit("sy_loop:");
+            self.emit("  %sy_i = phi i64 [ 0, %sy_entry ], [ %sy_next, %sy_loop ]");
+            self.emit("  %sy_ps = getelementptr i8, i8* %src, i64 %sy_i");
+            self.emit("  %sy_pd = getelementptr i8, i8* %dst, i64 %sy_i");
+            self.emit("  %sy_c = load i8, i8* %sy_ps");
+            self.emit("  store i8 %sy_c, i8* %sy_pd");
+            self.emit("  %sy_done = icmp eq i8 %sy_c, 0");
+            self.emit("  %sy_next = add i64 %sy_i, 1");
+            self.emit("  br i1 %sy_done, label %sy_exit, label %sy_loop");
+            self.emit("sy_exit:");
+            self.emit("  ret i8* %dst");
+            self.emit("}");
+            self.emit("");
+
+            // puts via SYS_write(1, buf, len) + newline — syscall 1 on x86-64
+            self.emit("define i32 @puts(i8* %s) {");
+            self.emit("  %pt_len = call i64 @strlen(i8* %s)");
+            self.emit("  call i64 (i64, ...) @syscall(i64 1, i64 1, i8* %s, i64 %pt_len)");
+            self.emit("  %pt_nl = alloca i8");
+            self.emit("  store i8 10, i8* %pt_nl");
+            self.emit("  call i64 (i64, ...) @syscall(i64 1, i64 1, i8* %pt_nl, i64 1)");
+            self.emit("  ret i32 0");
+            self.emit("}");
+            self.emit("");
+
+            // fopen via SYS_open (syscall 2) / SYS_creat style
+            self.emit("define i8* @fopen(i8* %filename, i8* %mode) {");
+            self.emit("fo_entry:");
+            self.emit("  %fo_mc = load i8, i8* %mode");
+            self.emit("  %fo_isw = icmp eq i8 %fo_mc, 119");
+            self.emit("  br i1 %fo_isw, label %fo_write, label %fo_read");
+            // O_WRONLY|O_CREAT|O_TRUNC = 577, mode 0644
+            self.emit("fo_write:");
+            self.emit(
+                "  %fo_wfd = call i64 (i64, ...) @syscall(i64 2, i8* %filename, i64 577, i64 420)",
+            );
+            self.emit("  %fo_wh = inttoptr i64 %fo_wfd to i8*");
+            self.emit("  ret i8* %fo_wh");
+            // O_RDONLY = 0
+            self.emit("fo_read:");
+            self.emit(
+                "  %fo_rfd = call i64 (i64, ...) @syscall(i64 2, i8* %filename, i64 0, i64 0)",
+            );
+            self.emit("  %fo_rh = inttoptr i64 %fo_rfd to i8*");
+            self.emit("  ret i8* %fo_rh");
+            self.emit("}");
+            self.emit("");
+
+            // fclose via SYS_close (syscall 3)
+            self.emit("define i32 @fclose(i8* %handle) {");
+            self.emit("  %fc_fd = ptrtoint i8* %handle to i64");
+            self.emit("  call i64 (i64, ...) @syscall(i64 3, i64 %fc_fd)");
+            self.emit("  ret i32 0");
+            self.emit("}");
+            self.emit("");
+
+            // fread via SYS_read (syscall 0)
+            self.emit("define i64 @fread(i8* %buf, i64 %sz, i64 %count, i8* %handle) {");
+            self.emit("  %fr_fd = ptrtoint i8* %handle to i64");
+            self.emit("  %fr_total = mul i64 %sz, %count");
+            self.emit("  %fr_n = call i64 (i64, ...) @syscall(i64 0, i64 %fr_fd, i8* %buf, i64 %fr_total)");
+            self.emit("  ret i64 %fr_n");
+            self.emit("}");
+            self.emit("");
+
+            // fwrite via SYS_write (syscall 1)
+            self.emit("define i64 @fwrite(i8* %buf, i64 %sz, i64 %count, i8* %handle) {");
+            self.emit("  %fw_fd = ptrtoint i8* %handle to i64");
+            self.emit("  %fw_total = mul i64 %sz, %count");
+            self.emit("  %fw_n = call i64 (i64, ...) @syscall(i64 1, i64 %fw_fd, i8* %buf, i64 %fw_total)");
+            self.emit("  ret i64 %fw_n");
+            self.emit("}");
+            self.emit("");
+
+            // fseek via SYS_lseek (syscall 8)
+            self.emit("define i32 @fseek(i8* %handle, i64 %offset, i32 %whence) {");
+            self.emit("  %fsk_fd = ptrtoint i8* %handle to i64");
+            self.emit("  %fsk_wh = sext i32 %whence to i64");
+            self.emit(
+                "  call i64 (i64, ...) @syscall(i64 8, i64 %fsk_fd, i64 %offset, i64 %fsk_wh)",
+            );
+            self.emit("  ret i32 0");
+            self.emit("}");
+            self.emit("");
+
+            // ftell via SYS_lseek(fd, 0, SEEK_CUR=1)
+            self.emit("define i64 @ftell(i8* %handle) {");
+            self.emit("  %ft_fd = ptrtoint i8* %handle to i64");
+            self.emit("  %ft_pos = call i64 (i64, ...) @syscall(i64 8, i64 %ft_fd, i64 0, i64 1)");
+            self.emit("  ret i64 %ft_pos");
+            self.emit("}");
             self.emit("");
         }
 
         // int_to_string: pure IR digit extraction, no sprintf needed
+        self.emit("define i8* @int_to_string_stack(i64 %n, i8* %buf) {");
+        self.emit("its2_entry:");
+        self.emit("  %its2_iszero = icmp eq i64 %n, 0");
+        self.emit("  br i1 %its2_iszero, label %its2_zero, label %its2_nonzero");
+        self.emit("its2_zero:");
+        self.emit("  %its2_zp = getelementptr i8, i8* %buf, i64 30");
+        self.emit("  store i8 48, i8* %its2_zp");
+        self.emit("  %its2_zt = getelementptr i8, i8* %buf, i64 31");
+        self.emit("  store i8 0, i8* %its2_zt");
+        self.emit("  ret i8* %its2_zp");
+        self.emit("its2_nonzero:");
+        self.emit("  %its2_isneg = icmp slt i64 %n, 0");
+        self.emit("  %its2_neg = sub i64 0, %n");
+        self.emit("  %its2_abs = select i1 %its2_isneg, i64 %its2_neg, i64 %n");
+        self.emit("  %its2_term = getelementptr i8, i8* %buf, i64 31");
+        self.emit("  store i8 0, i8* %its2_term");
+        self.emit("  br label %its2_loop");
+        self.emit("its2_loop:");
+        self.emit("  %its2_cur = phi i64 [ %its2_abs, %its2_nonzero ], [ %its2_quot, %its2_loop ]");
+        self.emit("  %its2_pos = phi i64 [ 30, %its2_nonzero ], [ %its2_prev, %its2_loop ]");
+        self.emit("  %its2_rem = srem i64 %its2_cur, 10");
+        self.emit("  %its2_quot = sdiv i64 %its2_cur, 10");
+        self.emit("  %its2_ascii = add i64 %its2_rem, 48");
+        self.emit("  %its2_ch = trunc i64 %its2_ascii to i8");
+        self.emit("  %its2_wp = getelementptr i8, i8* %buf, i64 %its2_pos");
+        self.emit("  store i8 %its2_ch, i8* %its2_wp");
+        self.emit("  %its2_prev = sub i64 %its2_pos, 1");
+        self.emit("  %its2_done = icmp eq i64 %its2_quot, 0");
+        self.emit("  br i1 %its2_done, label %its2_finish, label %its2_loop");
+        self.emit("its2_finish:");
+        self.emit("  br i1 %its2_isneg, label %its2_addneg, label %its2_ret");
+        self.emit("its2_addneg:");
+        self.emit("  %its2_np = getelementptr i8, i8* %buf, i64 %its2_prev");
+        self.emit("  store i8 45, i8* %its2_np");
+        self.emit("  ret i8* %its2_np");
+        self.emit("its2_ret:");
+        self.emit("  %its2_rp = getelementptr i8, i8* %buf, i64 %its2_pos");
+        self.emit("  ret i8* %its2_rp");
+        self.emit("}");
+        self.emit("");
+
         self.emit("define i8* @int_to_string_impl(i64 %n) {");
         self.emit("its_entry:");
         self.emit("  %its_buf = call i8* @malloc(i64 32)");
@@ -344,7 +575,11 @@ impl CodeGenerator {
         // brn_print_int: on Windows uses WriteFile, on Unix uses puts
         if cfg!(target_os = "windows") {
             self.emit("define void @brn_print_int(i64 %n) {");
-            self.emit("  %bpi_str = call i8* @int_to_string_impl(i64 %n)");
+            self.emit("  %bpi_buf = alloca [32 x i8]");
+            self.emit(
+                "  %bpi_buf_ptr = getelementptr [32 x i8], [32 x i8]* %bpi_buf, i64 0, i64 0",
+            );
+            self.emit("  %bpi_str = call i8* @int_to_string_stack(i64 %n, i8* %bpi_buf_ptr)");
             self.emit("  %bpi_out = call i8* @GetStdHandle(i32 -11)");
             self.emit("  %bpi_len64 = call i64 @strlen(i8* %bpi_str)");
             self.emit("  %bpi_len32 = trunc i64 %bpi_len64 to i32");
@@ -354,14 +589,17 @@ impl CodeGenerator {
             self.emit("  %bpi_nl = alloca i8");
             self.emit("  store i8 10, i8* %bpi_nl");
             self.emit("  call i32 @WriteFile(i8* %bpi_out, i8* %bpi_nl, i32 1, i32* %bpi_written, i8* null)");
-            self.emit("  call void @free(i8* %bpi_str)");
             self.emit("  ret void");
             self.emit("}");
         } else {
+            // Linux: SYS_write directly — no libc
             self.emit("define void @brn_print_int(i64 %n) {");
             self.emit("  %bpi_str = call i8* @int_to_string_impl(i64 %n)");
-            self.emit("  call i32 @puts(i8* %bpi_str)");
-            self.emit("  call void @free(i8* %bpi_str)");
+            self.emit("  %bpi_len = call i64 @strlen(i8* %bpi_str)");
+            self.emit("  call i64 (i64, ...) @syscall(i64 1, i64 1, i8* %bpi_str, i64 %bpi_len)");
+            self.emit("  %bpi_nl = alloca i8");
+            self.emit("  store i8 10, i8* %bpi_nl");
+            self.emit("  call i64 (i64, ...) @syscall(i64 1, i64 1, i8* %bpi_nl, i64 1)");
             self.emit("  ret void");
             self.emit("}");
         }
@@ -1126,7 +1364,25 @@ impl CodeGenerator {
                     BinOp::DotDot => right_reg,
                     BinOp::Add => {
                         if self.infer_type(left) == "string" {
-                            self.gen_string_concat(&left_reg, &right_reg)
+                            let result = self.gen_string_concat(&left_reg, &right_reg);
+                            let free_if_owned = |cg: &mut CodeGenerator, node: &AstNode| {
+                                if let AstNode::Identifier { name, .. } = node {
+                                    if let Some(meta) = cg.current_function_vars.get(name).cloned()
+                                    {
+                                        if !meta.is_string_literal {
+                                            let loaded = cg.new_temp();
+                                            cg.emit(&format!(
+                                                "  {} = load i8*, i8** {}",
+                                                loaded, meta.llvm_name
+                                            ));
+                                            cg.emit(&format!("  call void @free(i8* {})", loaded));
+                                        }
+                                    }
+                                }
+                            };
+                            free_if_owned(self, right);
+                            free_if_owned(self, left);
+                            result
                         } else {
                             let result = self.new_temp();
                             self.emit(&format!(
@@ -1363,7 +1619,14 @@ impl CodeGenerator {
                         if meta.var_type.starts_with('[') || meta.var_type == "array" {
                             return meta.llvm_name;
                         }
-                        meta.llvm_name
+                        let result = self.new_temp();
+                        let llvm_type_str = self.type_to_llvm(&meta.var_type);
+                        let llvm_name = meta.llvm_name.clone();
+                        self.emit(&format!(
+                            "  {} = load {}, {}* {}",
+                            result, llvm_type_str, llvm_type_str, llvm_name
+                        ));
+                        result
                     } else {
                         eprintln!(
                             "CODEGEN ERROR: Variable '{}' not found for reference!",
@@ -1470,12 +1733,22 @@ impl CodeGenerator {
                         match arg_node {
                             AstNode::Reference(inner) => match inner.as_ref() {
                                 AstNode::Identifier { name: var_name, .. } => {
-                                    if let Some(meta) = self.current_function_vars.get(var_name) {
-                                        arg_regs.push(meta.llvm_name.clone());
-
+                                    if let Some(meta) =
+                                        self.current_function_vars.get(var_name).cloned()
+                                    {
                                         if let Some(size) = meta.array_size {
+                                            arg_regs.push(meta.llvm_name.clone());
                                             arg_types.push(format!("[{} x i64]*", size));
+                                        } else if meta.var_type == "string" {
+                                            let loaded = self.new_temp();
+                                            self.emit(&format!(
+                                                "  {} = load i8*, i8** {}",
+                                                loaded, meta.llvm_name
+                                            ));
+                                            arg_regs.push(loaded);
+                                            arg_types.push("i8*".to_string());
                                         } else {
+                                            arg_regs.push(meta.llvm_name.clone());
                                             arg_types.push(format!(
                                                 "{}*",
                                                 self.type_to_llvm(&meta.var_type)
@@ -1495,7 +1768,28 @@ impl CodeGenerator {
                             _ => {
                                 let reg = self.gen_node(arg_node);
                                 let arg_type = self.infer_type(arg_node);
-                                arg_regs.push(reg);
+                                if arg_type == "string" {
+                                    let len = self.new_temp();
+                                    let len1 = self.new_temp();
+                                    let copy = self.new_temp();
+                                    let copied = self.new_temp();
+                                    self.emit(&format!(
+                                        "  {} = call i64 @strlen(i8* {})",
+                                        len, reg
+                                    ));
+                                    self.emit(&format!("  {} = add i64 {}, 1", len1, len));
+                                    self.emit(&format!(
+                                        "  {} = call i8* @malloc(i64 {})",
+                                        copy, len1
+                                    ));
+                                    self.emit(&format!(
+                                        "  {} = call i8* @strcpy(i8* {}, i8* {})",
+                                        copied, copy, reg
+                                    ));
+                                    arg_regs.push(copy);
+                                } else {
+                                    arg_regs.push(reg);
+                                }
                                 arg_types.push(self.type_to_llvm(&arg_type));
                             }
                         }
@@ -1514,14 +1808,15 @@ impl CodeGenerator {
                         .cloned()
                         .unwrap_or_else(|| "i64".to_string());
 
+                    let mangled = Self::mangle_fn(name);
                     if return_type == "void" {
-                        self.emit(&format!("  call void @{}({})", name, args_str));
+                        self.emit(&format!("  call void @{}({})", mangled, args_str));
                         "0".to_string()
                     } else {
                         let result = self.new_temp();
                         self.emit(&format!(
                             "  {} = call {} @{}({})",
-                            result, return_type, name, args_str
+                            result, return_type, mangled, args_str
                         ));
                         result
                     }
@@ -1601,6 +1896,13 @@ impl CodeGenerator {
         }
     }
 
+    fn mangle_fn(name: &str) -> String {
+        match name {
+            "main" => "main".to_string(),
+            _ => format!("brn_{}", name),
+        }
+    }
+
     fn gen_function(
         &mut self,
         name: &str,
@@ -1610,6 +1912,7 @@ impl CodeGenerator {
     ) -> String {
         self.current_function_vars.clear();
         self.temp_counter = 0;
+        self.label_counter = 0;
 
         let ret_type = if name == "main" {
             "i32".to_string()
@@ -1656,9 +1959,10 @@ impl CodeGenerator {
                 .join(", ")
         };
 
+        let mangled = Self::mangle_fn(name);
         self.emit(&format!(
             "\ndefine {} @{}({}) {{",
-            ret_type, name, param_list
+            ret_type, mangled, param_list
         ));
         self.emit("entry:");
 
@@ -1814,6 +2118,7 @@ impl CodeGenerator {
                     .map(|t| self.llvm_to_type(t))
                     .unwrap_or_else(|| "int".to_string()),
             },
+            AstNode::Reference(inner) => self.infer_type(inner),
             AstNode::MethodCall { object, method, .. } => {
                 let obj_type = self.infer_type(object);
                 match method.as_str() {

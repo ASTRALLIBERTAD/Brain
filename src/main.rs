@@ -110,16 +110,15 @@ fn compile_file(input_file: &str, output_file: &str) {
         .arg(&output_exe)
         .arg("-Wno-override-module");
 
-    #[cfg(target_os = "windows")]
-    {
+    if cfg!(target_os = "windows") {
         cmd.arg("-fuse-ld=lld");
         cmd.arg("-lkernel32");
-        cmd.arg("-lmsvcrt");
-    }
-
-    #[cfg(target_os = "linux")]
-    {
+    } else if cfg!(target_os = "linux") {
         cmd.arg("-static");
+        cmd.arg("-nostdlib");
+    } else if cfg!(target_os = "macos") {
+        cmd.arg("-nostdlib");
+        cmd.arg("-lSystem");
     }
 
     match cmd.output() {

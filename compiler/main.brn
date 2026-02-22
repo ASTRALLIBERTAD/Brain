@@ -1,8 +1,17 @@
 import { internal_only, add } from "math.brn";
 
+
+fn double_str(s: string) -> string {
+    return &s + &s;
+}
+
 fn main() {
     print("HI");
     print(add(3, 4));
     print("Kk");
     print(internal_only());
+
+    let result = double_str("hello");
+    print(&result);
+    write_file("main.txt", &result);
 }

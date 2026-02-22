@@ -107,10 +107,10 @@ impl ModuleCache {
 
         let mut exported_names = HashSet::new();
         let mut all_definitions: Vec<AstNode> = Vec::new();
+        let mut seen_names: HashSet<String> = HashSet::new();
 
         for (dep_canonical, dep_names) in &transitive_imports {
             if let Some(dep_exports) = self.cache.get(dep_canonical) {
-                // Access check for this module's own imports
                 for name in dep_names {
                     if !dep_exports.exported_names.contains(name) {
                         return Err(format!(
@@ -119,14 +119,23 @@ impl ModuleCache {
                         ));
                     }
                 }
-                all_definitions.extend(dep_exports.all_definitions.clone());
+                for node in &dep_exports.all_definitions {
+                    match node {
+                        AstNode::FunctionDef { name, .. } | AstNode::LetBinding { name, .. } => {
+                            if seen_names.insert(name.clone()) {
+                                all_definitions.push(node.clone());
+                            }
+                        }
+                        other => all_definitions.push(other.clone()),
+                    }
+                }
             }
         }
 
         if let AstNode::Program(nodes) = ast {
             for node in nodes {
                 match &node {
-                    AstNode::Import { .. } => {} // already handled above
+                    AstNode::Import { .. } => {}
 
                     AstNode::FunctionDef {
                         name, is_exported, ..
@@ -134,7 +143,9 @@ impl ModuleCache {
                         if *is_exported {
                             exported_names.insert(name.clone());
                         }
-                        all_definitions.push(node);
+                        if seen_names.insert(name.clone()) {
+                            all_definitions.push(node);
+                        }
                     }
 
                     AstNode::LetBinding {
@@ -143,7 +154,9 @@ impl ModuleCache {
                         if *is_exported {
                             exported_names.insert(name.clone());
                         }
-                        all_definitions.push(node);
+                        if seen_names.insert(name.clone()) {
+                            all_definitions.push(node);
+                        }
                     }
 
                     other => {

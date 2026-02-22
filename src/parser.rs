@@ -921,6 +921,12 @@ impl<'a> Parser<'a> {
             });
         }
 
+        if self.check(&TokenType::Ampersand) {
+            self.advance();
+            let operand = self.parse_unary()?;
+            return Ok(AstNode::Reference(Box::new(operand)));
+        }
+
         self.parse_factor()
     }
 
