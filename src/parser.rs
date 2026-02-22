@@ -10,12 +10,18 @@ pub struct Location {
 pub enum AstNode {
     Program(Vec<AstNode>),
 
+    Import {
+        names: Vec<String>,
+        path: String,
+    },
+
     LetBinding {
         mutable: bool,
         name: String,
         type_annotation: Option<String>,
         value: Box<AstNode>,
         location: Location,
+        is_exported: bool,
     },
     Assignment {
         name: String,
@@ -28,6 +34,7 @@ pub enum AstNode {
         params: Vec<Parameter>,
         return_type: Option<String>,
         body: Box<AstNode>,
+        is_exported: bool,
     },
 
     StructDef {
@@ -204,8 +211,12 @@ impl<'a> Parser<'a> {
         let mut nodes = Vec::new();
 
         while !self.is_at_end() {
-            if self.check(&TokenType::Fn) {
-                nodes.push(self.parse_function()?);
+            if self.check(&TokenType::Import) {
+                nodes.push(self.parse_import()?);
+            } else if self.check(&TokenType::Export) {
+                nodes.push(self.parse_export()?);
+            } else if self.check(&TokenType::Fn) {
+                nodes.push(self.parse_function(false)?);
             } else if self.check(&TokenType::Struct) {
                 nodes.push(self.parse_struct_def()?);
             } else if self.check(&TokenType::Enum) {
@@ -218,7 +229,60 @@ impl<'a> Parser<'a> {
         Ok(AstNode::Program(nodes))
     }
 
-    fn parse_function(&mut self) -> Result<AstNode, String> {
+    fn parse_import(&mut self) -> Result<AstNode, String> {
+        self.consume(&TokenType::Import, "Expected 'import'")?;
+        self.consume(&TokenType::LBrace, "Expected '{' after 'import'")?;
+
+        let mut names = Vec::new();
+
+        if !self.check(&TokenType::RBrace) {
+            loop {
+                names.push(self.consume_identifier("Expected symbol name in import list")?);
+                if !self.check(&TokenType::Comma) {
+                    break;
+                }
+                self.advance();
+                // Allow trailing comma: `import { a, b, }` is valid
+                if self.check(&TokenType::RBrace) {
+                    break;
+                }
+            }
+        }
+
+        if names.is_empty() {
+            return Err(self.error("Import list cannot be empty"));
+        }
+
+        self.consume(&TokenType::RBrace, "Expected '}' after import list")?;
+        self.consume(&TokenType::From, "Expected 'from' after import list")?;
+
+        let path = match &self.peek().token_type {
+            TokenType::StringLit(s) => {
+                let s = s.clone();
+                self.advance();
+                s
+            }
+            _ => return Err(self.error("Expected file path string after 'from'")),
+        };
+
+        self.consume(&TokenType::Semicolon, "Expected ';'")?;
+
+        Ok(AstNode::Import { names, path })
+    }
+
+    fn parse_export(&mut self) -> Result<AstNode, String> {
+        self.consume(&TokenType::Export, "Expected 'export'")?;
+
+        if self.check(&TokenType::Fn) {
+            self.parse_function(true)
+        } else if self.check(&TokenType::Let) {
+            self.parse_let_binding_exported(true)
+        } else {
+            Err(self.error("'export' can only be applied to 'fn' or 'let' declarations"))
+        }
+    }
+
+    fn parse_function(&mut self, is_exported: bool) -> Result<AstNode, String> {
         self.consume(&TokenType::Fn, "Expected 'fn'")?;
 
         let name = self.consume_identifier("Expected function name")?;
@@ -241,6 +305,7 @@ impl<'a> Parser<'a> {
             params,
             return_type,
             body,
+            is_exported,
         })
     }
 
@@ -425,7 +490,7 @@ impl<'a> Parser<'a> {
 
     fn parse_statement(&mut self) -> Result<AstNode, String> {
         if self.check(&TokenType::Let) {
-            self.parse_let_binding()
+            self.parse_let_binding_exported(false)
         } else if self.check(&TokenType::If) {
             self.parse_if()
         } else if self.check(&TokenType::While) {
@@ -464,7 +529,7 @@ impl<'a> Parser<'a> {
         }
     }
 
-    fn parse_let_binding(&mut self) -> Result<AstNode, String> {
+    fn parse_let_binding_exported(&mut self, is_exported: bool) -> Result<AstNode, String> {
         let location = Location {
             line: self.peek().line,
             column: self.peek().column,
@@ -498,6 +563,7 @@ impl<'a> Parser<'a> {
             type_annotation,
             value,
             location,
+            is_exported,
         })
     }
 
@@ -588,6 +654,7 @@ impl<'a> Parser<'a> {
             body,
         })
     }
+
     fn parse_match(&mut self) -> Result<AstNode, String> {
         self.consume(&TokenType::Match, "Expected 'match'")?;
         let value = Box::new(self.parse_expression()?);
@@ -1066,4 +1133,3 @@ impl<'a> Parser<'a> {
         )
     }
 }
-

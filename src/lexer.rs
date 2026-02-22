@@ -17,6 +17,9 @@ pub enum TokenType {
     Continue,
     True,
     False,
+    Export,
+    Import,
+    From,
 
     // Types
     IntType,
@@ -383,6 +386,9 @@ impl<'a> Lexer<'a> {
             "continue" => TokenType::Continue,
             "true" => TokenType::True,
             "false" => TokenType::False,
+            "export" => TokenType::Export,
+            "import" => TokenType::Import,
+            "from" => TokenType::From,
             "int" => TokenType::IntType,
             "bool" => TokenType::BoolType,
             "string" => TokenType::StringType,
@@ -420,7 +426,6 @@ impl<'a> Lexer<'a> {
 
         let mut error = String::new();
 
-        // Header: filename:line:column: error message
         error.push_str(&format!("\x1b[1m\x1b[31merror\x1b[0m: {}\n", message));
 
         error.push_str(&format!(
@@ -434,19 +439,17 @@ impl<'a> Lexer<'a> {
             width = line_num_width
         ));
 
-        // Show previous line for context (if exists)
-        if self.line > 1 {
-            if let Some(prev_line) = lines.get(self.line - 2) {
-                error.push_str(&format!(
-                    "\x1b[1m\x1b[34m{:width$} |\x1b[0m {}\n",
-                    self.line - 1,
-                    prev_line,
-                    width = line_num_width
-                ));
-            }
+        if self.line > 1
+            && let Some(prev_line) = lines.get(self.line - 2)
+        {
+            error.push_str(&format!(
+                "\x1b[1m\x1b[34m{:width$} |\x1b[0m {}\n",
+                self.line - 1,
+                prev_line,
+                width = line_num_width
+            ));
         }
 
-        // Current line with error
         error.push_str(&format!(
             "\x1b[1m\x1b[34m{:width$} |\x1b[0m {}\n",
             self.line,
@@ -507,4 +510,3 @@ impl<'a> Lexer<'a> {
         self.current >= self.chars.len()
     }
 }
-

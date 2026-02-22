@@ -1,0 +1,6 @@
+export fn add(a: int, b: int) -> int {
+    print(internal_only());
+    return a + b;
+}
+
+fn internal_only() -> int { return 99; }  // not visible to importers

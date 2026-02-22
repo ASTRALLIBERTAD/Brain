@@ -29,6 +29,7 @@ struct LoopLabels {
     continue_label: String,
     break_label: String,
 }
+
 fn get_target_triple() -> &'static str {
     if cfg!(target_os = "windows") {
         "x86_64-pc-windows-msvc"
@@ -38,6 +39,7 @@ fn get_target_triple() -> &'static str {
         "x86_64-pc-linux-gnu"
     }
 }
+
 impl CodeGenerator {
     pub fn new() -> Self {
         CodeGenerator {
@@ -145,6 +147,8 @@ impl CodeGenerator {
 
     fn gen_node(&mut self, node: &AstNode) -> String {
         match node {
+            AstNode::Import { .. } => "0".to_string(),
+
             AstNode::EnumDef { name, variants } => {
                 let variant_names: Vec<String> = variants.iter().map(|v| v.name.clone()).collect();
                 self.enum_types.insert(name.clone(), variant_names);
@@ -278,6 +282,7 @@ impl CodeGenerator {
                 params,
                 body,
                 return_type,
+                ..  // is_exported is irrelevant to codegen
             } => self.gen_function(name, params, body, return_type),
 
             AstNode::LetBinding { name, value, .. } => {
@@ -446,7 +451,7 @@ impl CodeGenerator {
                 {
                     (self.gen_node(left), self.gen_node(right))
                 } else {
-                    ("0".to_string(), self.gen_node(iterator)) // no range, just end bound
+                    ("0".to_string(), self.gen_node(iterator))
                 };
 
                 let start_label = self.new_label("for_start");
@@ -627,7 +632,6 @@ impl CodeGenerator {
                                 "  {} = call i32 @strcmp(i8* {}, i8* {})",
                                 cmp, left_reg, right_reg
                             ));
-
                             let result = self.new_temp();
                             self.emit(&format!("  {} = icmp eq i32 {}, 0", result, cmp));
                             result
@@ -637,7 +641,6 @@ impl CodeGenerator {
                                 "  {} = icmp eq i64 {}, {}",
                                 result, left_reg, right_reg
                             ));
-
                             result
                         }
                     }
@@ -1083,6 +1086,7 @@ impl CodeGenerator {
             }
         }
 
+        self.block_terminated = false;
         self.gen_node(body);
 
         if name == "main" && !self.block_terminated {
@@ -1218,4 +1222,3 @@ impl CodeGenerator {
         )
     }
 }
-
