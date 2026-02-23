@@ -16,6 +16,7 @@ pub struct CodeGenerator {
     current_function_name: String,
     current_function_return_type: String,
     function_signatures: HashMap<String, String>,
+    pure_functions: std::collections::HashSet<String>,
 }
 
 #[derive(Clone)]
@@ -59,6 +60,7 @@ impl CodeGenerator {
             current_function_name: String::new(),
             current_function_return_type: String::new(),
             function_signatures: HashMap::new(),
+            pure_functions: std::collections::HashSet::new(),
         }
     }
 
@@ -75,6 +77,29 @@ impl CodeGenerator {
             }
         }
 
+        if let AstNode::Program(nodes) = ast {
+            for node in nodes {
+                if let AstNode::FunctionDef {
+                    name, params, body, ..
+                } = node
+                {
+                    if Self::infer_purity(params, body) {
+                        self.pure_functions.insert(name.clone());
+                    }
+                }
+            }
+        }
+
+        // Dead code elimination: only emit functions and top-level let bindings
+        // that are reachable from main. Walk the call graph starting at "main",
+        // collect every called name transitively, then skip anything not in
+        // that set during codegen.
+        let reachable = if let AstNode::Program(nodes) = ast {
+            Self::collect_reachable(nodes)
+        } else {
+            std::collections::HashSet::new()
+        };
+
         for (struct_name, fields) in &self.struct_types.clone() {
             let field_types: Vec<String> =
                 fields.iter().map(|(_, ft)| self.type_to_llvm(ft)).collect();
@@ -89,12 +114,138 @@ impl CodeGenerator {
 
         if let AstNode::Program(nodes) = ast {
             for node in nodes {
-                self.gen_node(node);
+                match node {
+                    AstNode::FunctionDef { name, .. } => {
+                        if reachable.contains(name.as_str()) {
+                            self.gen_node(node);
+                        }
+                    }
+                    AstNode::LetBinding { name, .. } => {
+                        if reachable.contains(name.as_str()) {
+                            self.gen_node(node);
+                        }
+                    }
+                    _ => {
+                        self.gen_node(node);
+                    }
+                }
             }
         }
 
         self.emit_footer();
         self.build_output()
+    }
+
+    fn collect_reachable(nodes: &[AstNode]) -> std::collections::HashSet<String> {
+        let mut reachable = std::collections::HashSet::new();
+        let mut queue = vec!["main".to_string()];
+
+        let fn_bodies: std::collections::HashMap<&str, &AstNode> = nodes
+            .iter()
+            .filter_map(|n| {
+                if let AstNode::FunctionDef { name, body, .. } = n {
+                    Some((name.as_str(), body.as_ref()))
+                } else {
+                    None
+                }
+            })
+            .collect();
+
+        while let Some(current) = queue.pop() {
+            if reachable.contains(&current) {
+                continue;
+            }
+            reachable.insert(current.clone());
+            if let Some(body) = fn_bodies.get(current.as_str()) {
+                Self::collect_calls(body, &mut queue);
+            }
+        }
+
+        reachable
+    }
+
+    fn collect_calls(node: &AstNode, queue: &mut Vec<String>) {
+        match node {
+            AstNode::Call { name, args } => {
+                queue.push(name.clone());
+                for arg in args {
+                    Self::collect_calls(arg, queue);
+                }
+            }
+            AstNode::Block(stmts) | AstNode::Program(stmts) => {
+                for s in stmts {
+                    Self::collect_calls(s, queue);
+                }
+            }
+            AstNode::FunctionDef { body, .. } => Self::collect_calls(body, queue),
+            AstNode::LetBinding { value, .. } => Self::collect_calls(value, queue),
+            AstNode::Assignment { value, .. } => Self::collect_calls(value, queue),
+            AstNode::ArrayAssignment { index, value, .. } => {
+                Self::collect_calls(index, queue);
+                Self::collect_calls(value, queue);
+            }
+            AstNode::If {
+                condition,
+                then_block,
+                else_block,
+            } => {
+                Self::collect_calls(condition, queue);
+                Self::collect_calls(then_block, queue);
+                if let Some(e) = else_block {
+                    Self::collect_calls(e, queue);
+                }
+            }
+            AstNode::While { condition, body } => {
+                Self::collect_calls(condition, queue);
+                Self::collect_calls(body, queue);
+            }
+            AstNode::For { iterator, body, .. } => {
+                Self::collect_calls(iterator, queue);
+                Self::collect_calls(body, queue);
+            }
+            AstNode::Return(v) => {
+                if let Some(n) = v {
+                    Self::collect_calls(n, queue);
+                }
+            }
+            AstNode::BinaryOp { left, right, .. } => {
+                Self::collect_calls(left, queue);
+                Self::collect_calls(right, queue);
+            }
+            AstNode::UnaryOp { operand, .. } => Self::collect_calls(operand, queue),
+            AstNode::ExpressionStatement(e) => Self::collect_calls(e, queue),
+            AstNode::Match { value, arms } => {
+                Self::collect_calls(value, queue);
+                for arm in arms {
+                    Self::collect_calls(&arm.body, queue);
+                }
+            }
+            AstNode::ArrayLit(elems) => {
+                for e in elems {
+                    Self::collect_calls(e, queue);
+                }
+            }
+            AstNode::StructInit { fields, .. } => {
+                for (_, v) in fields {
+                    Self::collect_calls(v, queue);
+                }
+            }
+            AstNode::Index { array, index } => {
+                Self::collect_calls(array, queue);
+                Self::collect_calls(index, queue);
+            }
+            AstNode::Reference(e) | AstNode::EnumValue { value: Some(e), .. } => {
+                Self::collect_calls(e, queue);
+            }
+            AstNode::MethodCall { object, args, .. } => {
+                Self::collect_calls(object, queue);
+                for a in args {
+                    Self::collect_calls(a, queue);
+                }
+            }
+            AstNode::MemberAccess { object, .. } => Self::collect_calls(object, queue),
+            _ => {}
+        }
     }
 
     fn emit_header(&mut self) {
@@ -1042,12 +1193,26 @@ impl CodeGenerator {
                     || (var_type == "Vec")
                     || is_struct;
 
-                let array_size = if let AstNode::ArrayLit(elements) = value.as_ref() {
-                    Some(elements.len())
-                } else {
-                    None
-                };
+                // Array literals are already fully allocated by ArrayLit codegen
+                // which returns a [N x i64]* directly. Store the pointer itself
+                // rather than wrapping it in another alloca layer.
+                if let AstNode::ArrayLit(elements) = value.as_ref() {
+                    let size = elements.len();
+                    let sized_type = format!("[{}; int]", size);
+                    self.current_function_vars.insert(
+                        name.clone(),
+                        VarMetadata {
+                            llvm_name: value_reg.clone(),
+                            var_type: sized_type,
+                            is_heap: false,
+                            array_size: Some(size),
+                            is_string_literal: false,
+                        },
+                    );
+                    return value_reg;
+                }
 
+                let array_size = None;
                 let ptr = self.new_temp();
                 let llvm_type_str = self.type_to_llvm(&var_type);
                 self.emit(&format!("  {} = alloca {}", ptr, llvm_type_str));
@@ -1616,9 +1781,11 @@ impl CodeGenerator {
             AstNode::Reference(expr) => match expr.as_ref() {
                 AstNode::Identifier { name, .. } => {
                     if let Some(meta) = self.current_function_vars.get(name).cloned() {
+                        // Arrays and array refs: llvm_name IS already the pointer
                         if meta.var_type.starts_with('[') || meta.var_type == "array" {
                             return meta.llvm_name;
                         }
+                        // For everything else, load the value to get the address
                         let result = self.new_temp();
                         let llvm_type_str = self.type_to_llvm(&meta.var_type);
                         let llvm_name = meta.llvm_name.clone();
@@ -1896,6 +2063,120 @@ impl CodeGenerator {
         }
     }
 
+    fn is_pointer_llvm_type(ty: &str) -> bool {
+        matches!(ty, "string" | "Vec")
+            || ty.starts_with('[')
+            || (!matches!(ty, "int" | "bool" | "char" | "void") && !ty.is_empty())
+    }
+
+    fn infer_purity(params: &[Parameter], body: &AstNode) -> bool {
+        for p in params {
+            let (is_ref, is_mut, _) = Self::strip_ref_prefix(&p.param_type);
+            if (p.is_reference || is_ref) && (p.is_mutable || is_mut) {
+                return false;
+            }
+        }
+        Self::body_is_pure(body)
+    }
+
+    fn body_is_pure(node: &AstNode) -> bool {
+        match node {
+            AstNode::Assignment { .. } | AstNode::ArrayAssignment { .. } => false,
+            AstNode::Call { name, args } => {
+                !matches!(
+                    name.as_str(),
+                    "print"
+                        | "println"
+                        | "print_int"
+                        | "println_int"
+                        | "print_bool"
+                        | "println_bool"
+                        | "print_char"
+                        | "println_char"
+                        | "read_file"
+                        | "write_file"
+                        | "vec_push"
+                        | "vec_set"
+                        | "send"
+                        | "recv"
+                        | "spawn"
+                ) && args.iter().all(Self::body_is_pure)
+            }
+            AstNode::Program(nodes) | AstNode::Block(nodes) => nodes.iter().all(Self::body_is_pure),
+            AstNode::FunctionDef { body, .. } => Self::body_is_pure(body),
+            AstNode::LetBinding { value, .. } => Self::body_is_pure(value),
+            AstNode::If {
+                condition,
+                then_block,
+                else_block,
+            } => {
+                Self::body_is_pure(condition)
+                    && Self::body_is_pure(then_block)
+                    && else_block.as_ref().map_or(true, |e| Self::body_is_pure(e))
+            }
+            AstNode::While { condition, body } => {
+                Self::body_is_pure(condition) && Self::body_is_pure(body)
+            }
+            AstNode::For { iterator, body, .. } => {
+                Self::body_is_pure(iterator) && Self::body_is_pure(body)
+            }
+            AstNode::Return(v) => v.as_ref().map_or(true, |n| Self::body_is_pure(n)),
+            AstNode::BinaryOp { op, left, right } => {
+                if matches!(op, BinOp::Add) {
+                    let might_be_string = matches!(
+                        left.as_ref(),
+                        AstNode::Identifier { .. } | AstNode::StringLit(_)
+                    ) || matches!(
+                        right.as_ref(),
+                        AstNode::Identifier { .. } | AstNode::StringLit(_)
+                    );
+                    if might_be_string {
+                        return false;
+                    }
+                }
+                Self::body_is_pure(left) && Self::body_is_pure(right)
+            }
+            AstNode::UnaryOp { operand, .. } => Self::body_is_pure(operand),
+            AstNode::ExpressionStatement(e) => Self::body_is_pure(e),
+            AstNode::Match { value, arms } => {
+                Self::body_is_pure(value) && arms.iter().all(|a| Self::body_is_pure(&a.body))
+            }
+            AstNode::ArrayLit(elems) => elems.iter().all(Self::body_is_pure),
+            AstNode::StructInit { fields, .. } => fields.iter().all(|(_, v)| Self::body_is_pure(v)),
+            AstNode::Index { array, index } => {
+                Self::body_is_pure(array) && Self::body_is_pure(index)
+            }
+            AstNode::Reference(e) => Self::body_is_pure(e),
+            AstNode::EnumValue { value: Some(e), .. } => Self::body_is_pure(e),
+            AstNode::MethodCall { object, args, .. } => {
+                Self::body_is_pure(object) && args.iter().all(Self::body_is_pure)
+            }
+            AstNode::MemberAccess { object, .. } => Self::body_is_pure(object),
+            AstNode::Identifier { .. }
+            | AstNode::Number(_)
+            | AstNode::Boolean(_)
+            | AstNode::StringLit(_)
+            | AstNode::Character(_)
+            | AstNode::Break
+            | AstNode::Continue
+            | AstNode::Import { .. }
+            | AstNode::StructDef { .. }
+            | AstNode::EnumDef { .. }
+            | AstNode::ArrayType { .. }
+            | AstNode::EnumValue { value: None, .. } => true,
+        }
+    }
+
+    fn strip_ref_prefix(ty: &str) -> (bool, bool, &str) {
+        if let Some(rest) = ty.strip_prefix("&mut ") {
+            (true, true, rest)
+        } else if let Some(rest) = ty.strip_prefix('&') {
+            (true, false, rest)
+        } else {
+            (false, false, ty)
+        }
+    }
+
     fn mangle_fn(name: &str) -> String {
         match name {
             "main" => "main".to_string(),
@@ -1933,9 +2214,14 @@ impl CodeGenerator {
             params
                 .iter()
                 .map(|p| {
-                    let param_type_str = if p.is_reference {
-                        if p.param_type.starts_with('[') {
-                            if let Some(size_str) = p.param_type.split(';').nth(1) {
+                    let (type_is_ref, type_is_mut, inner_type) =
+                        Self::strip_ref_prefix(&p.param_type);
+                    let type_is_ref = type_is_ref || p.is_reference;
+                    let type_is_mut = type_is_mut || p.is_mutable;
+
+                    let param_type_str = if type_is_ref {
+                        if inner_type.starts_with('[') {
+                            if let Some(size_str) = inner_type.split(';').nth(1) {
                                 let size = size_str
                                     .trim()
                                     .trim_end_matches(']')
@@ -1947,31 +2233,61 @@ impl CodeGenerator {
                                 "i64*".to_string()
                             }
                         } else {
-                            format!("{}*", self.type_to_llvm(&p.param_type))
+                            format!("{}*", self.type_to_llvm(inner_type))
                         }
                     } else {
                         self.type_to_llvm(&p.param_type)
                     };
 
-                    format!("{} %arg_{}", param_type_str, p.name)
+                    let is_simple_ptr = type_is_ref && !inner_type.starts_with('[');
+                    let is_owned_ptr =
+                        !type_is_ref && Self::is_pointer_llvm_type(&p.param_type) && !type_is_mut;
+
+                    let attrs = if is_simple_ptr {
+                        if !type_is_mut {
+                            "noalias readonly"
+                        } else {
+                            "noalias"
+                        }
+                    } else if is_owned_ptr {
+                        "noalias readonly"
+                    } else {
+                        ""
+                    };
+
+                    if attrs.is_empty() {
+                        format!("{} %arg_{}", param_type_str, p.name)
+                    } else {
+                        format!("{} {} %arg_{}", param_type_str, attrs, p.name)
+                    }
                 })
                 .collect::<Vec<_>>()
                 .join(", ")
         };
 
         let mangled = Self::mangle_fn(name);
+
+        let fn_attrs = if name != "main" && self.pure_functions.contains(name) {
+            " nounwind readonly willreturn"
+        } else {
+            " nounwind"
+        };
+
         self.emit(&format!(
-            "\ndefine {} @{}({}) {{",
-            ret_type, mangled, param_list
+            "\ndefine {} @{}({}){} {{",
+            ret_type, mangled, param_list, fn_attrs
         ));
         self.emit("entry:");
 
         for param in params {
-            if param.is_reference {
-                let param_type_name = param.param_type.clone();
+            let (type_is_ref, _type_is_mut, inner_type) = Self::strip_ref_prefix(&param.param_type);
+            let type_is_ref = type_is_ref || param.is_reference;
 
-                let array_size = if param.param_type.starts_with('[') {
-                    if let Some(size_str) = param.param_type.split(';').nth(1) {
+            if type_is_ref {
+                let param_type_name = inner_type.to_string();
+
+                let array_size = if inner_type.starts_with('[') {
+                    if let Some(size_str) = inner_type.split(';').nth(1) {
                         size_str
                             .trim()
                             .trim_end_matches(']')

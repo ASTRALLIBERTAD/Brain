@@ -1,10 +1,23 @@
 import { internal_only, add } from "math.brn";
 
+fn sum(arr: &[int; 4]) -> int {
+    return arr[0] + arr[1] + arr[2] + arr[3];
+}
 
 fn double_str(s: string) -> string {
     return &s + &s;
 }
 
+fn process(x: int) -> int {
+    print(x);
+    return x * 2;
+}
+fn fill(arr: &mut [int; 4], val: int) {
+    arr[0] = val;
+    arr[1] = val;
+    arr[2] = val;
+    arr[3] = val;
+}
 fn main() {
     print("HI");
     print(add(3, 4));
@@ -14,4 +27,9 @@ fn main() {
     let result = double_str("hello");
     print(&result);
     write_file("main.txt", &result);
+
+    let mut u = [1,2,3,4,];
+    fill(&u, 9);
+    fill(&u, 5);
+    (process(90));
 }

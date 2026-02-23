@@ -430,8 +430,18 @@ impl<'a> Parser<'a> {
             }
             TokenType::Ampersand => {
                 self.advance();
+                let is_mut = if self.check(&TokenType::Mut) {
+                    self.advance();
+                    true
+                } else {
+                    false
+                };
                 let inner = self.parse_type()?;
-                Ok(format!("&{}", inner))
+                if is_mut {
+                    Ok(format!("&mut {}", inner))
+                } else {
+                    Ok(format!("&{}", inner))
+                }
             }
             TokenType::LBracket => {
                 self.advance();

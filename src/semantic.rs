@@ -55,12 +55,16 @@ impl<'a> SemanticAnalyzer<'a> {
             AstNode::FunctionDef { params, body, .. } => {
                 self.push_scope();
                 for param in params {
-                    self.declare_variable(
-                        &param.name,
-                        param.is_mutable,
-                        param.param_type.clone(),
-                        0,
-                    );
+                    let is_mut_ref = param.param_type.starts_with("&mut ");
+                    let effective_mutable = param.is_mutable || is_mut_ref;
+                    let effective_type = if is_mut_ref {
+                        param.param_type["&mut ".len()..].to_string()
+                    } else if param.param_type.starts_with('&') {
+                        param.param_type[1..].to_string()
+                    } else {
+                        param.param_type.clone()
+                    };
+                    self.declare_variable(&param.name, effective_mutable, effective_type, 0);
                 }
                 self.visit(body)?;
                 self.pop_scope();
