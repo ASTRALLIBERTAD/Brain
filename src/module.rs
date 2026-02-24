@@ -48,7 +48,20 @@ impl ModuleCache {
             }
         }
 
-        Ok(exports.all_definitions.clone())
+        let requested: std::collections::HashSet<&str> =
+            requested_names.iter().map(|s| s.as_str()).collect();
+
+        Ok(exports
+            .all_definitions
+            .iter()
+            .filter(|node| match node {
+                AstNode::FunctionDef { name, .. } | AstNode::LetBinding { name, .. } => {
+                    requested.contains(name.as_str())
+                }
+                _ => true,
+            })
+            .cloned()
+            .collect())
     }
 
     pub fn resolve_path(requesting_file: &str, import_path: &str) -> Result<String, String> {

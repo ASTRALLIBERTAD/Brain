@@ -1,5 +1,14 @@
 import { internal_only, add } from "math.brn";
 
+fn make_greeting(s: string) -> string {
+    return s + "!";        // result escapes via return — stays on heap, correct
+}
+
+fn just_print(s: string) {
+    let loud = s + "!!!";  // loud does NOT escape — should be stack-promoted
+    print(loud);
+}
+
 fn sum(arr: &[int; 4]) -> int {
     return arr[0] + arr[1] + arr[2] + arr[3];
 }
@@ -32,4 +41,7 @@ fn main() {
     fill(&u, 9);
     fill(&u, 5);
     (process(90));
+    let g = make_greeting("hello");
+    print(&g);
+    just_print("ok");
 }

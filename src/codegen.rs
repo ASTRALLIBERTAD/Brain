@@ -17,6 +17,8 @@ pub struct CodeGenerator {
     current_function_return_type: String,
     function_signatures: HashMap<String, String>,
     pure_functions: std::collections::HashSet<String>,
+    non_escaping: std::collections::HashSet<String>,
+    current_binding: Option<String>,
 }
 
 #[derive(Clone)]
@@ -43,6 +45,178 @@ fn get_target_triple() -> &'static str {
     }
 }
 
+struct EscapeAnalysis {
+    escaping: std::collections::HashSet<String>,
+}
+
+impl EscapeAnalysis {
+    fn analyze(params: &[Parameter], body: &AstNode) -> std::collections::HashSet<String> {
+        let mut ea = EscapeAnalysis {
+            escaping: std::collections::HashSet::new(),
+        };
+        ea.visit_body(params, body);
+        ea.escaping
+    }
+
+    fn visit_body(&mut self, params: &[Parameter], body: &AstNode) {
+        // Params passed by value that are pointer types always escape
+        // (they came from the caller). Ref params are fine — not our allocation.
+        for p in params {
+            let (is_ref, _, _) = CodeGenerator::strip_ref_prefix(&p.param_type);
+            if !is_ref && !p.is_reference {
+                let inner = p.param_type.as_str();
+                if matches!(inner, "string" | "Vec")
+                    || (!matches!(inner, "int" | "bool" | "char") && !inner.is_empty())
+                {
+                    self.escaping.insert(p.name.clone());
+                }
+            }
+        }
+        self.visit(body);
+    }
+
+    fn visit(&mut self, node: &AstNode) {
+        match node {
+            AstNode::Return(Some(val)) => {
+                self.mark_escaping(val);
+                self.visit(val);
+            }
+            AstNode::Call { name, args } => {
+                let safe_builtins = matches!(
+                    name.as_str(),
+                    "print"
+                        | "println"
+                        | "print_int"
+                        | "println_int"
+                        | "print_bool"
+                        | "println_bool"
+                        | "print_char"
+                        | "println_char"
+                        | "write_file"
+                        | "read_file"
+                        | "vec_len"
+                        | "vec_get"
+                        | "vec_push"
+                        | "vec_set"
+                        | "int_to_string"
+                        | "len"
+                );
+                for arg in args {
+                    match arg {
+                        AstNode::Reference(_) => {}
+                        _ if !safe_builtins => {
+                            let t = Self::rough_type(arg);
+                            if Self::is_heap_type(&t) {
+                                self.mark_escaping(arg);
+                            }
+                        }
+                        _ => {}
+                    }
+                    self.visit(arg);
+                }
+            }
+            AstNode::LetBinding { value, .. } => self.visit(value),
+            AstNode::Assignment { value, .. } => self.visit(value),
+            AstNode::Block(stmts) | AstNode::Program(stmts) => {
+                for s in stmts {
+                    self.visit(s);
+                }
+            }
+            AstNode::If {
+                condition,
+                then_block,
+                else_block,
+            } => {
+                self.visit(condition);
+                self.visit(then_block);
+                if let Some(e) = else_block {
+                    self.visit(e);
+                }
+            }
+            AstNode::While { condition, body } => {
+                self.visit(condition);
+                self.visit(body);
+            }
+            AstNode::For { iterator, body, .. } => {
+                self.visit(iterator);
+                self.visit(body);
+            }
+            AstNode::BinaryOp { left, right, .. } => {
+                self.visit(left);
+                self.visit(right);
+            }
+            AstNode::UnaryOp { operand, .. } => self.visit(operand),
+            AstNode::ExpressionStatement(e) => self.visit(e),
+            AstNode::Match { value, arms } => {
+                self.visit(value);
+                for arm in arms {
+                    self.visit(&arm.body);
+                }
+            }
+            AstNode::ArrayLit(elems) => {
+                for e in elems {
+                    self.visit(e);
+                }
+            }
+            AstNode::StructInit { fields, .. } => {
+                for (_, v) in fields {
+                    self.visit(v);
+                }
+            }
+            AstNode::Index { array, index } => {
+                self.visit(array);
+                self.visit(index);
+            }
+            AstNode::Reference(e) => self.visit(e),
+            AstNode::MemberAccess { object, .. } => self.visit(object),
+            AstNode::MethodCall { object, args, .. } => {
+                self.visit(object);
+                for a in args {
+                    self.visit(a);
+                }
+            }
+            AstNode::Return(None)
+            | AstNode::Break
+            | AstNode::Continue
+            | AstNode::Identifier { .. }
+            | AstNode::Number(_)
+            | AstNode::Boolean(_)
+            | AstNode::StringLit(_)
+            | AstNode::Character(_)
+            | AstNode::ArrayAssignment { .. }
+            | AstNode::FunctionDef { .. }
+            | AstNode::StructDef { .. }
+            | AstNode::EnumDef { .. }
+            | AstNode::EnumValue { .. }
+            | AstNode::ArrayType { .. }
+            | AstNode::Import { .. } => {}
+        }
+    }
+
+    fn mark_escaping(&mut self, node: &AstNode) {
+        match node {
+            AstNode::Identifier { name, .. } => {
+                self.escaping.insert(name.clone());
+            }
+            AstNode::Reference(inner) => self.mark_escaping(inner),
+            _ => {}
+        }
+    }
+
+    fn rough_type(node: &AstNode) -> String {
+        match node {
+            AstNode::StringLit(_) => "string".to_string(),
+            AstNode::Identifier { .. } => "unknown".to_string(),
+            AstNode::BinaryOp { left, .. } => Self::rough_type(left),
+            _ => String::new(),
+        }
+    }
+
+    fn is_heap_type(t: &str) -> bool {
+        matches!(t, "string" | "Vec" | "unknown")
+    }
+}
+
 impl CodeGenerator {
     pub fn new() -> Self {
         CodeGenerator {
@@ -61,6 +235,8 @@ impl CodeGenerator {
             current_function_return_type: String::new(),
             function_signatures: HashMap::new(),
             pure_functions: std::collections::HashSet::new(),
+            non_escaping: std::collections::HashSet::new(),
+            current_binding: None,
         }
     }
 
@@ -901,15 +1077,25 @@ impl CodeGenerator {
             AstNode::StructInit { name, fields } => {
                 let struct_fields = self.struct_types.get(name).cloned().unwrap_or_default();
                 let num_fields = struct_fields.len();
-                let size = (num_fields as i64) * 8;
 
-                let raw_ptr = self.new_temp();
-                self.emit(&format!("  {} = call i8* @malloc(i64 {})", raw_ptr, size));
+                let stack_promote = self
+                    .current_binding
+                    .as_ref()
+                    .map(|b| self.non_escaping.contains(b))
+                    .unwrap_or(false);
+
                 let struct_ptr = self.new_temp();
-                self.emit(&format!(
-                    "  {} = bitcast i8* {} to %{}*",
-                    struct_ptr, raw_ptr, name
-                ));
+                if stack_promote {
+                    self.emit(&format!("  {} = alloca %{}", struct_ptr, name));
+                } else {
+                    let size = (num_fields as i64) * 8;
+                    let raw_ptr = self.new_temp();
+                    self.emit(&format!("  {} = call i8* @malloc(i64 {})", raw_ptr, size));
+                    self.emit(&format!(
+                        "  {} = bitcast i8* {} to %{}*",
+                        struct_ptr, raw_ptr, name
+                    ));
+                }
 
                 for (field_name, field_value) in fields.iter() {
                     let val_reg = self.gen_node(field_value);
@@ -1184,18 +1370,22 @@ impl CodeGenerator {
             } => self.gen_function(name, params, body, return_type),
 
             AstNode::LetBinding { name, value, .. } => {
+                self.current_binding = Some(name.clone());
                 let value_reg = self.gen_node(value);
+                self.current_binding = None;
                 let var_type = self.infer_type(value);
 
                 let is_string_literal = matches!(value.as_ref(), AstNode::StringLit(_));
                 let is_struct = self.struct_types.contains_key(&var_type);
-                let is_heap = (var_type == "string" && !is_string_literal)
-                    || (var_type == "Vec")
-                    || is_struct;
+                let stack_promote = self.non_escaping.contains(name);
 
-                // Array literals are already fully allocated by ArrayLit codegen
-                // which returns a [N x i64]* directly. Store the pointer itself
-                // rather than wrapping it in another alloca layer.
+                // A value is heap-tracked only when it actually lives on the heap
+                // AND it isn't being stack-promoted by escape analysis.
+                let is_heap = !stack_promote
+                    && ((var_type == "string" && !is_string_literal)
+                        || (var_type == "Vec")
+                        || is_struct);
+
                 if let AstNode::ArrayLit(elements) = value.as_ref() {
                     let size = elements.len();
                     let sized_type = format!("[{}; int]", size);
@@ -1212,7 +1402,6 @@ impl CodeGenerator {
                     return value_reg;
                 }
 
-                let array_size = None;
                 let ptr = self.new_temp();
                 let llvm_type_str = self.type_to_llvm(&var_type);
                 self.emit(&format!("  {} = alloca {}", ptr, llvm_type_str));
@@ -1227,7 +1416,7 @@ impl CodeGenerator {
                         llvm_name: ptr.clone(),
                         var_type,
                         is_heap,
-                        array_size,
+                        array_size: None,
                         is_string_literal,
                     },
                 );
@@ -2070,13 +2259,48 @@ impl CodeGenerator {
     }
 
     fn infer_purity(params: &[Parameter], body: &AstNode) -> bool {
+        let has_string_param = params.iter().any(|p| {
+            let (_, _, inner) = Self::strip_ref_prefix(&p.param_type);
+            inner == "string"
+        });
         for p in params {
             let (is_ref, is_mut, _) = Self::strip_ref_prefix(&p.param_type);
             if (p.is_reference || is_ref) && (p.is_mutable || is_mut) {
                 return false;
             }
         }
+        if has_string_param && Self::body_contains_add(body) {
+            return false;
+        }
         Self::body_is_pure(body)
+    }
+
+    fn body_contains_add(node: &AstNode) -> bool {
+        match node {
+            AstNode::BinaryOp { op: BinOp::Add, .. } => true,
+            AstNode::BinaryOp { left, right, .. } => {
+                Self::body_contains_add(left) || Self::body_contains_add(right)
+            }
+            AstNode::Block(nodes) | AstNode::Program(nodes) => {
+                nodes.iter().any(Self::body_contains_add)
+            }
+            AstNode::Return(Some(v)) => Self::body_contains_add(v),
+            AstNode::LetBinding { value, .. } => Self::body_contains_add(value),
+            AstNode::If {
+                condition,
+                then_block,
+                else_block,
+            } => {
+                Self::body_contains_add(condition)
+                    || Self::body_contains_add(then_block)
+                    || else_block
+                        .as_ref()
+                        .map_or(false, |e| Self::body_contains_add(e))
+            }
+            AstNode::Call { args, .. } => args.iter().any(Self::body_contains_add),
+            AstNode::ExpressionStatement(e) => Self::body_contains_add(e),
+            _ => false,
+        }
     }
 
     fn body_is_pure(node: &AstNode) -> bool {
@@ -2123,14 +2347,9 @@ impl CodeGenerator {
             AstNode::Return(v) => v.as_ref().map_or(true, |n| Self::body_is_pure(n)),
             AstNode::BinaryOp { op, left, right } => {
                 if matches!(op, BinOp::Add) {
-                    let might_be_string = matches!(
-                        left.as_ref(),
-                        AstNode::Identifier { .. } | AstNode::StringLit(_)
-                    ) || matches!(
-                        right.as_ref(),
-                        AstNode::Identifier { .. } | AstNode::StringLit(_)
-                    );
-                    if might_be_string {
+                    let has_string_lit = matches!(left.as_ref(), AstNode::StringLit(_))
+                        || matches!(right.as_ref(), AstNode::StringLit(_));
+                    if has_string_lit {
                         return false;
                     }
                 }
@@ -2194,6 +2413,18 @@ impl CodeGenerator {
         self.current_function_vars.clear();
         self.temp_counter = 0;
         self.label_counter = 0;
+
+        let escaping = EscapeAnalysis::analyze(params, body);
+        self.non_escaping.clear();
+        if let AstNode::Block(stmts) = body {
+            for stmt in stmts {
+                if let AstNode::LetBinding { name, .. } = stmt {
+                    if !escaping.contains(name) {
+                        self.non_escaping.insert(name.clone());
+                    }
+                }
+            }
+        }
 
         let ret_type = if name == "main" {
             "i32".to_string()
@@ -2349,6 +2580,15 @@ impl CodeGenerator {
     }
 
     fn gen_string_concat(&mut self, left: &str, right: &str) -> String {
+        let use_stack = self
+            .current_binding
+            .as_ref()
+            .map(|b| self.non_escaping.contains(b))
+            .unwrap_or(false);
+        self.gen_string_concat_inner(left, right, use_stack)
+    }
+
+    fn gen_string_concat_inner(&mut self, left: &str, right: &str, use_stack: bool) -> String {
         let len1 = self.new_temp();
         let len2 = self.new_temp();
         self.emit(&format!("  {} = call i64 @strlen(i8* {})", len1, left));
@@ -2360,10 +2600,19 @@ impl CodeGenerator {
         self.emit(&format!("  {} = add i64 {}, 1", total_plus_one, total));
 
         let new_ptr = self.new_temp();
-        self.emit(&format!(
-            "  {} = call i8* @malloc(i64 {})",
-            new_ptr, total_plus_one
-        ));
+        if use_stack {
+            // Variable-length stack allocation — no malloc, no free needed.
+            // Safe because the binding was proven non-escaping by EscapeAnalysis.
+            self.emit(&format!(
+                "  {} = alloca i8, i64 {}",
+                new_ptr, total_plus_one
+            ));
+        } else {
+            self.emit(&format!(
+                "  {} = call i8* @malloc(i64 {})",
+                new_ptr, total_plus_one
+            ));
+        }
 
         let temp1 = self.new_temp();
         self.emit(&format!(
