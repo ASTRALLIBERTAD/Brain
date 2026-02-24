@@ -35,6 +35,7 @@ pub enum AstNode {
         return_type: Option<String>,
         body: Box<AstNode>,
         is_exported: bool,
+        is_unsafe: bool,
     },
 
     StructDef {
@@ -69,6 +70,13 @@ pub enum AstNode {
     ArrayAssignment {
         array: String,
         index: Box<AstNode>,
+        value: Box<AstNode>,
+        location: Location,
+    },
+
+    MemberAssignment {
+        object: String,
+        field: String,
         value: Box<AstNode>,
         location: Location,
     },
@@ -217,8 +225,11 @@ impl<'a> Parser<'a> {
                 nodes.push(self.parse_import()?);
             } else if self.check(&TokenType::Export) {
                 nodes.push(self.parse_export()?);
+            } else if self.check(&TokenType::Unsafe) {
+                self.advance();
+                nodes.push(self.parse_function(false, true)?);
             } else if self.check(&TokenType::Fn) {
-                nodes.push(self.parse_function(false)?);
+                nodes.push(self.parse_function(false, false)?);
             } else if self.check(&TokenType::Struct) {
                 nodes.push(self.parse_struct_def()?);
             } else if self.check(&TokenType::Enum) {
@@ -274,16 +285,20 @@ impl<'a> Parser<'a> {
     fn parse_export(&mut self) -> Result<AstNode, String> {
         self.consume(&TokenType::Export, "Expected 'export'")?;
 
-        if self.check(&TokenType::Fn) {
-            self.parse_function(true)
+        if self.check(&TokenType::Unsafe) {
+            self.advance();
+            self.parse_function(true, true)
+        } else if self.check(&TokenType::Fn) {
+            self.parse_function(true, false)
         } else if self.check(&TokenType::Let) {
             self.parse_let_binding_exported(true)
         } else {
-            Err(self.error("'export' can only be applied to 'fn' or 'let' declarations"))
+            Err(self
+                .error("'export' can only be applied to 'fn', 'unsafe fn', or 'let' declarations"))
         }
     }
 
-    fn parse_function(&mut self, is_exported: bool) -> Result<AstNode, String> {
+    fn parse_function(&mut self, is_exported: bool, is_unsafe: bool) -> Result<AstNode, String> {
         self.consume(&TokenType::Fn, "Expected 'fn'")?;
 
         let name = self.consume_identifier("Expected function name")?;
@@ -307,6 +322,7 @@ impl<'a> Parser<'a> {
             return_type,
             body,
             is_exported,
+            is_unsafe,
         })
     }
 
@@ -430,16 +446,13 @@ impl<'a> Parser<'a> {
             }
             TokenType::Ampersand => {
                 self.advance();
-                let is_mut = if self.check(&TokenType::Mut) {
+                // Handle both &T and &mut T
+                if self.check(&TokenType::Mut) {
                     self.advance();
-                    true
-                } else {
-                    false
-                };
-                let inner = self.parse_type()?;
-                if is_mut {
+                    let inner = self.parse_type()?;
                     Ok(format!("&mut {}", inner))
                 } else {
+                    let inner = self.parse_type()?;
                     Ok(format!("&{}", inner))
                 }
             }
@@ -463,7 +476,15 @@ impl<'a> Parser<'a> {
                 let name = name.clone();
                 self.advance();
                 if name == "Vec" {
-                    Ok("vec".to_string())
+                    Ok("Vec".to_string())
+                } else if name == "Mutex" {
+                    self.consume(&TokenType::LessThan, "Expected '<' after 'Mutex'")?;
+                    let inner = self.parse_type()?;
+                    self.consume(
+                        &TokenType::GreaterThan,
+                        "Expected '>' after Mutex inner type",
+                    )?;
+                    Ok(format!("Mutex<{}>", inner))
                 } else {
                     Ok(name)
                 }
@@ -537,6 +558,32 @@ impl<'a> Parser<'a> {
                 self.parse_assignment()
             } else if *next_token == TokenType::LBracket {
                 self.parse_array_assignment_or_expression()
+            } else if *next_token == TokenType::Dot {
+                // Check for member assignment: obj.field = val;
+                let ahead2 = &self.peek_ahead(2).token_type;
+                let ahead3 = &self.peek_ahead(3).token_type;
+                if matches!(ahead2, TokenType::Identifier(_)) && *ahead3 == TokenType::Assign {
+                    let location = Location {
+                        line: self.peek().line,
+                        column: self.peek().column,
+                    };
+                    let obj_name = self.consume_identifier("Expected object name")?;
+                    self.advance(); // consume '.'
+                    let field_name = self.consume_identifier("Expected field name")?;
+                    self.advance(); // consume '='
+                    let value = Box::new(self.parse_expression()?);
+                    self.consume(&TokenType::Semicolon, "Expected ';'")?;
+                    Ok(AstNode::MemberAssignment {
+                        object: obj_name,
+                        field: field_name,
+                        value,
+                        location,
+                    })
+                } else {
+                    let expr = self.parse_expression()?;
+                    self.consume(&TokenType::Semicolon, "Expected ';'")?;
+                    Ok(AstNode::ExpressionStatement(Box::new(expr)))
+                }
             } else {
                 let expr = self.parse_expression()?;
                 self.consume(&TokenType::Semicolon, "Expected ';'")?;

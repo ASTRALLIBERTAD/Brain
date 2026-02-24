@@ -93,6 +93,16 @@ fn compile_file(input_file: &str, output_file: &str) {
     let mut codegen = CodeGenerator::new();
     let llvm_ir = codegen.generate(&ast);
 
+    // Detect missing main() before invoking the linker — gives a clear error
+    // instead of the cryptic "subsystem must be defined" from lld-link.
+    let has_main = llvm_ir.contains("define i32 @main()");
+    if !has_main {
+        eprintln!("Error: no 'main' function found in '{}'", input_file);
+        eprintln!("  Brain programs must define a 'fn main()' entry point.");
+        eprintln!("  If you're writing a library, compile with --lib (not yet supported).");
+        process::exit(1);
+    }
+
     let ll_file = format!("{}.ll", output_file);
     let output_exe = get_output_filename(output_file);
 
@@ -113,6 +123,9 @@ fn compile_file(input_file: &str, output_file: &str) {
     if cfg!(target_os = "windows") {
         cmd.arg("-fuse-ld=lld");
         cmd.arg("-lkernel32");
+        // Tell lld-link this is a console application — required when
+        // there's no WinMain (our entry point is always @main / console).
+        cmd.arg("-Wl,/subsystem:console");
     } else if cfg!(target_os = "linux") {
         cmd.arg("-static");
         cmd.arg("-nostdlib");

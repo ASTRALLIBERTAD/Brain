@@ -20,6 +20,7 @@ pub enum TokenType {
     Export,
     Import,
     From,
+    Unsafe,
 
     // Types
     IntType,
@@ -389,6 +390,7 @@ impl<'a> Lexer<'a> {
             "export" => TokenType::Export,
             "import" => TokenType::Import,
             "from" => TokenType::From,
+            "unsafe" => TokenType::Unsafe,
             "int" => TokenType::IntType,
             "bool" => TokenType::BoolType,
             "string" => TokenType::StringType,

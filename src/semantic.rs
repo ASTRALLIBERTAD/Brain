@@ -16,6 +16,7 @@ pub struct SemanticAnalyzer<'a> {
     current_line: usize,
     current_column: usize,
     in_loop: bool,
+    in_unsafe_fn: bool,
 }
 
 impl<'a> SemanticAnalyzer<'a> {
@@ -26,6 +27,7 @@ impl<'a> SemanticAnalyzer<'a> {
             current_line: 1,
             current_column: 1,
             in_loop: false,
+            in_unsafe_fn: false,
         }
     }
 
@@ -52,22 +54,40 @@ impl<'a> SemanticAnalyzer<'a> {
 
             AstNode::Import { .. } => Ok(()),
 
-            AstNode::FunctionDef { params, body, .. } => {
+            AstNode::FunctionDef {
+                params,
+                body,
+                is_unsafe,
+                ..
+            } => {
+                let prev_unsafe = self.in_unsafe_fn;
+                self.in_unsafe_fn = *is_unsafe;
                 self.push_scope();
                 for param in params {
-                    let is_mut_ref = param.param_type.starts_with("&mut ");
-                    let effective_mutable = param.is_mutable || is_mut_ref;
-                    let effective_type = if is_mut_ref {
-                        param.param_type["&mut ".len()..].to_string()
-                    } else if param.param_type.starts_with('&') {
-                        param.param_type[1..].to_string()
+                    // Mutex params are always by-reference — enforce this
+                    if param.param_type.starts_with("Mutex<") && !param.is_reference {
+                        return Err(format!(
+                            "{}:{}:{}: Error: Mutex '{}' must be passed by reference '&Mutex<...>', not by value\n    Help: Change to '&{}' or '&mut {}'",
+                            self.filename,
+                            self.current_line,
+                            self.current_column,
+                            param.name,
+                            param.name,
+                            param.name
+                        ));
+                    }
+                    let effective_mutable =
+                        param.is_mutable || param.param_type.starts_with("&mut ");
+                    let clean_type = if param.param_type.starts_with("&mut ") {
+                        param.param_type[5..].to_string()
                     } else {
                         param.param_type.clone()
                     };
-                    self.declare_variable(&param.name, effective_mutable, effective_type, 0);
+                    self.declare_variable(&param.name, effective_mutable, clean_type, 0);
                 }
                 self.visit(body)?;
                 self.pop_scope();
+                self.in_unsafe_fn = prev_unsafe;
                 Ok(())
             }
 
@@ -86,8 +106,34 @@ impl<'a> SemanticAnalyzer<'a> {
                     self.check_not_consumed(var_name)?;
                     self.consume_variable(var_name)?;
                 }
-                let var_type = type_annotation
-                    .clone()
+                // If value is `mutex_var.lock()`, infer type as MutexGuard<T>
+                let guard_type = if let AstNode::MethodCall { object, method, .. } = value.as_ref()
+                {
+                    if method == "lock" {
+                        if let AstNode::Identifier { name: obj_name, .. } = object.as_ref() {
+                            if let Some(info) = self.lookup_variable(obj_name) {
+                                let obj_type = info.var_type.clone();
+                                if obj_type.starts_with("Mutex<") {
+                                    let inner = &obj_type[6..obj_type.len() - 1];
+                                    Some(format!("MutexGuard<{}>", inner))
+                                } else {
+                                    None
+                                }
+                            } else {
+                                None
+                            }
+                        } else {
+                            None
+                        }
+                    } else {
+                        None
+                    }
+                } else {
+                    None
+                };
+
+                let var_type = guard_type
+                    .or_else(|| type_annotation.clone())
                     .unwrap_or_else(|| self.infer_type(value));
                 self.declare_variable(name, *mutable, var_type, location.line);
                 Ok(())
@@ -124,6 +170,19 @@ impl<'a> SemanticAnalyzer<'a> {
                 self.check_not_consumed(array)?;
                 self.check_is_mutable(array)?;
                 self.visit(index)?;
+                self.visit(value)?;
+                Ok(())
+            }
+
+            AstNode::MemberAssignment {
+                object,
+                value,
+                location,
+                ..
+            } => {
+                self.current_line = location.line;
+                self.current_column = location.column;
+                self.check_variable_exists(object)?;
                 self.visit(value)?;
                 Ok(())
             }
@@ -292,10 +351,39 @@ impl<'a> SemanticAnalyzer<'a> {
                 Ok(())
             }
 
-            AstNode::MethodCall { object, args, .. } => {
+            AstNode::MethodCall {
+                object,
+                method,
+                args,
+                ..
+            } => {
                 self.visit(object)?;
                 for arg in args {
                     self.visit(arg)?;
+                }
+                // Enforce: only .lock() is valid on a Mutex type
+                if let AstNode::Identifier {
+                    name: obj_name,
+                    location,
+                } = object.as_ref()
+                {
+                    self.current_line = location.line;
+                    self.current_column = location.column;
+                    if let Some(info) = self.lookup_variable(obj_name) {
+                        let obj_type = info.var_type.clone();
+                        if obj_type.starts_with("Mutex<") {
+                            if method != "lock" {
+                                return Err(format!(
+                                    "{}:{}:{}: Error: '{}' is not a valid method on Mutex — only '.lock()' is allowed\n    Help: Use '{}.lock()' to acquire the guard",
+                                    self.filename,
+                                    self.current_line,
+                                    self.current_column,
+                                    method,
+                                    obj_name
+                                ));
+                            }
+                        }
+                    }
                 }
                 Ok(())
             }

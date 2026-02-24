@@ -19,6 +19,9 @@ pub struct CodeGenerator {
     pure_functions: std::collections::HashSet<String>,
     non_escaping: std::collections::HashSet<String>,
     current_binding: Option<String>,
+    is_unsafe_fn: bool,
+    // var names that hold a MutexGuard — loads/stores through these use volatile
+    guard_vars: std::collections::HashSet<String>,
 }
 
 #[derive(Clone)]
@@ -184,6 +187,7 @@ impl EscapeAnalysis {
             | AstNode::StringLit(_)
             | AstNode::Character(_)
             | AstNode::ArrayAssignment { .. }
+            | AstNode::MemberAssignment { .. }
             | AstNode::FunctionDef { .. }
             | AstNode::StructDef { .. }
             | AstNode::EnumDef { .. }
@@ -237,6 +241,8 @@ impl CodeGenerator {
             pure_functions: std::collections::HashSet::new(),
             non_escaping: std::collections::HashSet::new(),
             current_binding: None,
+            is_unsafe_fn: false,
+            guard_vars: std::collections::HashSet::new(),
         }
     }
 
@@ -360,6 +366,7 @@ impl CodeGenerator {
                 Self::collect_calls(index, queue);
                 Self::collect_calls(value, queue);
             }
+            AstNode::MemberAssignment { value, .. } => Self::collect_calls(value, queue),
             AstNode::If {
                 condition,
                 then_block,
@@ -437,6 +444,10 @@ impl CodeGenerator {
             self.emit("declare i32 @ReadFile(i8*, i8*, i32, i32*, i8*)");
             self.emit("declare i32 @CloseHandle(i8*)");
             self.emit("declare i32 @SetFilePointer(i8*, i32, i32*, i32)");
+            // Mutex primitives — CRITICAL_SECTION via kernel32
+            self.emit("declare void @InitializeCriticalSection(i8*)");
+            self.emit("declare void @EnterCriticalSection(i8*)");
+            self.emit("declare void @LeaveCriticalSection(i8*)");
             self.emit("");
 
             self.emit("define i8* @malloc(i64 %size) {");
@@ -1124,6 +1135,54 @@ impl CodeGenerator {
             }
 
             AstNode::MemberAccess { object, field } => {
+                // Guard variable access: guard.value reads the mutex's inner value with volatile
+                if let AstNode::Identifier { name: obj_name, .. } = object.as_ref() {
+                    if (self.guard_vars.contains(obj_name.as_str())
+                        || self
+                            .current_function_vars
+                            .get(obj_name.as_str())
+                            .map(|m| m.var_type.starts_with("MutexGuard<"))
+                            .unwrap_or(false))
+                        && field == "value"
+                        && !self.is_unsafe_fn
+                    {
+                        // Guard is the mutex raw pointer; value is at byte offset 40
+                        let guard_ptr = if let Some(meta) =
+                            self.current_function_vars.get(obj_name.as_str()).cloned()
+                        {
+                            // If the guard var holds an i8* directly (stored from lock()),
+                            // load it from the alloca slot. But if it IS a ref param (%arg_X),
+                            // it's already the i8* value.
+                            if meta.llvm_name.starts_with("%arg_") {
+                                meta.llvm_name.clone()
+                            } else {
+                                let loaded = self.new_temp();
+                                self.emit(&format!(
+                                    "  {} = load i8*, i8** {}",
+                                    loaded, meta.llvm_name
+                                ));
+                                loaded
+                            }
+                        } else {
+                            obj_name.to_string()
+                        };
+                        let val_gep = self.new_temp();
+                        self.emit(&format!(
+                            "  {} = getelementptr i8, i8* {}, i64 40",
+                            val_gep, guard_ptr
+                        ));
+                        let val_ptr = self.new_temp();
+                        self.emit(&format!("  {} = bitcast i8* {} to i64*", val_ptr, val_gep));
+                        let result = self.new_temp();
+                        // volatile load — prevents register caching across lock boundary
+                        self.emit(&format!(
+                            "  {} = load volatile i64, i64* {}",
+                            result, val_ptr
+                        ));
+                        return result;
+                    }
+                }
+
                 let obj_reg = self.gen_node(object);
                 let struct_name = self.infer_struct_name(object);
 
@@ -1159,6 +1218,34 @@ impl CodeGenerator {
                 variant,
                 value,
             } => {
+                // Mutex::new(initial_value) — allocate and initialize a CRITICAL_SECTION
+                if enum_name == "Mutex" && variant == "new" {
+                    let inner_val = if let Some(v) = value {
+                        self.gen_node(v)
+                    } else {
+                        "0".to_string()
+                    };
+                    // CRITICAL_SECTION on Windows is 40 bytes; inner value is i64 (8 bytes)
+                    // Layout: [cs_bytes: 40 x i8 | value: i64]
+                    let mutex_raw = self.new_temp();
+                    self.emit(&format!("  {} = call i8* @malloc(i64 48)", mutex_raw));
+                    // InitializeCriticalSection on the first 40 bytes
+                    self.emit(&format!(
+                        "  call void @InitializeCriticalSection(i8* {})",
+                        mutex_raw
+                    ));
+                    // Store initial value at offset 40
+                    let val_gep = self.new_temp();
+                    self.emit(&format!(
+                        "  {} = getelementptr i8, i8* {}, i64 40",
+                        val_gep, mutex_raw
+                    ));
+                    let val_ptr = self.new_temp();
+                    self.emit(&format!("  {} = bitcast i8* {} to i64*", val_ptr, val_gep));
+                    self.emit(&format!("  store i64 {}, i64* {}", inner_val, val_ptr));
+                    return mutex_raw;
+                }
+
                 let tag = if let Some(variants) = self.enum_types.get(enum_name) {
                     variants.iter().position(|v| v == variant).unwrap_or(0) as i64
                 } else {
@@ -1366,8 +1453,9 @@ impl CodeGenerator {
                 params,
                 body,
                 return_type,
+                is_unsafe,
                 ..
-            } => self.gen_function(name, params, body, return_type),
+            } => self.gen_function(name, params, body, return_type, *is_unsafe),
 
             AstNode::LetBinding { name, value, .. } => {
                 self.current_binding = Some(name.clone());
@@ -1375,13 +1463,25 @@ impl CodeGenerator {
                 self.current_binding = None;
                 let var_type = self.infer_type(value);
 
+                // If the value is a .lock() call, register this binding as a guard
+                if let AstNode::MethodCall { method, .. } = value.as_ref() {
+                    if method == "lock" && !self.is_unsafe_fn {
+                        self.guard_vars.insert(name.clone());
+                    }
+                }
+
                 let is_string_literal = matches!(value.as_ref(), AstNode::StringLit(_));
                 let is_struct = self.struct_types.contains_key(&var_type);
                 let stack_promote = self.non_escaping.contains(name);
 
                 // A value is heap-tracked only when it actually lives on the heap
                 // AND it isn't being stack-promoted by escape analysis.
+                // Mutex<T> is intentionally excluded — it's long-lived shared state,
+                // not subject to automatic scope-exit free.
+                let is_mutex =
+                    var_type.starts_with("Mutex<") || var_type.starts_with("MutexGuard<");
                 let is_heap = !stack_promote
+                    && !is_mutex
                     && ((var_type == "string" && !is_string_literal)
                         || (var_type == "Vec")
                         || is_struct);
@@ -1456,6 +1556,76 @@ impl CodeGenerator {
                         "  store {} {}, {}* {}",
                         llvm_type_str, value_reg, llvm_type_str, llvm_name
                     ));
+                }
+
+                value_reg
+            }
+
+            AstNode::MemberAssignment {
+                object,
+                field,
+                value,
+                ..
+            } => {
+                let value_reg = self.gen_node(value);
+
+                let is_guard = self.guard_vars.contains(object.as_str())
+                    || self
+                        .current_function_vars
+                        .get(object.as_str())
+                        .map(|m| m.var_type.starts_with("MutexGuard<"))
+                        .unwrap_or(false);
+
+                if is_guard && field == "value" && !self.is_unsafe_fn {
+                    // volatile store through the mutex guard
+                    if let Some(meta) = self.current_function_vars.get(object.as_str()).cloned() {
+                        let guard_ptr = if meta.llvm_name.starts_with("%arg_") {
+                            meta.llvm_name.clone()
+                        } else {
+                            let loaded = self.new_temp();
+                            self.emit(&format!("  {} = load i8*, i8** {}", loaded, meta.llvm_name));
+                            loaded
+                        };
+                        let val_gep = self.new_temp();
+                        self.emit(&format!(
+                            "  {} = getelementptr i8, i8* {}, i64 40",
+                            val_gep, guard_ptr
+                        ));
+                        let val_ptr = self.new_temp();
+                        self.emit(&format!("  {} = bitcast i8* {} to i64*", val_ptr, val_gep));
+                        self.emit(&format!(
+                            "  store volatile i64 {}, i64* {}",
+                            value_reg, val_ptr
+                        ));
+                    }
+                } else if let Some(struct_fields) = self
+                    .current_function_vars
+                    .get(object.as_str())
+                    .map(|m| m.var_type.clone())
+                    .and_then(|t| self.struct_types.get(&t).cloned())
+                {
+                    if let Some(meta) = self.current_function_vars.get(object.as_str()).cloned() {
+                        if let Some(field_idx) = struct_fields.iter().position(|(n, _)| n == field)
+                        {
+                            let struct_name = meta.var_type.clone();
+                            let obj_ptr = self.new_temp();
+                            self.emit(&format!(
+                                "  {} = load %{}*, %{}** {}",
+                                obj_ptr, struct_name, struct_name, meta.llvm_name
+                            ));
+                            let field_type = struct_fields[field_idx].1.clone();
+                            let llvm_ft = self.type_to_llvm(&field_type);
+                            let gep = self.new_temp();
+                            self.emit(&format!(
+                                "  {} = getelementptr %{}, %{}* {}, i32 0, i32 {}",
+                                gep, struct_name, struct_name, obj_ptr, field_idx
+                            ));
+                            self.emit(&format!(
+                                "  store {} {}, {}* {}",
+                                llvm_ft, value_reg, llvm_ft, gep
+                            ));
+                        }
+                    }
                 }
 
                 value_reg
@@ -1653,10 +1823,23 @@ impl CodeGenerator {
             AstNode::Block(statements) => {
                 let mut last_reg = String::new();
                 let vars_before = self.current_function_vars.clone();
+                let guards_before = self.guard_vars.clone();
 
                 for stmt in statements {
                     last_reg = self.gen_node(stmt);
                 }
+
+                // Guards that were created in this block — unlock at scope exit
+                let guards_to_unlock: Vec<_> = self
+                    .current_function_vars
+                    .iter()
+                    .filter(|(name, meta)| {
+                        meta.var_type.starts_with("MutexGuard<")
+                            && !vars_before.contains_key(name.as_str())
+                            && !self.is_unsafe_fn
+                    })
+                    .map(|(_, meta)| meta.llvm_name.clone())
+                    .collect();
 
                 let vars_to_free: Vec<_> = self
                     .current_function_vars
@@ -1670,6 +1853,16 @@ impl CodeGenerator {
                     .collect();
 
                 if !self.block_terminated {
+                    // Emit LeaveCriticalSection for each guard going out of scope
+                    for guard_slot in guards_to_unlock {
+                        let mutex_ptr = self.new_temp();
+                        self.emit(&format!("  {} = load i8*, i8** {}", mutex_ptr, guard_slot));
+                        self.emit(&format!(
+                            "  call void @LeaveCriticalSection(i8* {})",
+                            mutex_ptr
+                        ));
+                    }
+
                     for (llvm_name, var_type) in vars_to_free {
                         if self.struct_types.contains_key(&var_type) {
                             let struct_ptr = self.new_temp();
@@ -1704,6 +1897,9 @@ impl CodeGenerator {
                         }
                     }
                 }
+
+                // Restore guard tracking to pre-block state
+                self.guard_vars = guards_before;
 
                 last_reg
             }
@@ -2095,6 +2291,15 @@ impl CodeGenerator {
                                         if let Some(size) = meta.array_size {
                                             arg_regs.push(meta.llvm_name.clone());
                                             arg_types.push(format!("[{} x i64]*", size));
+                                        } else if meta.var_type.starts_with("Mutex<") {
+                                            // Mutex is already an i8* — load and pass directly
+                                            let loaded = self.new_temp();
+                                            self.emit(&format!(
+                                                "  {} = load i8*, i8** {}",
+                                                loaded, meta.llvm_name
+                                            ));
+                                            arg_regs.push(loaded);
+                                            arg_types.push("i8*".to_string());
                                         } else if meta.var_type == "string" {
                                             let loaded = self.new_temp();
                                             self.emit(&format!(
@@ -2244,6 +2449,41 @@ impl CodeGenerator {
                         ));
                         "0".to_string()
                     }
+                    // mutex.lock() — EnterCriticalSection, return pointer to mutex struct
+                    // as a MutexGuard (just the pointer; unlock happens at scope exit)
+                    "lock" if !self.is_unsafe_fn => {
+                        if let AstNode::Identifier { name: obj_name, .. } = object.as_ref() {
+                            if let Some(meta) = self.current_function_vars.get(obj_name).cloned() {
+                                // Ref params (llvm_name = %arg_X) hold the i8* directly.
+                                // Local vars (llvm_name = %N) are alloca slots holding i8*.
+                                let mutex_ptr = if meta.llvm_name.starts_with("%arg_") {
+                                    meta.llvm_name.clone()
+                                } else {
+                                    let loaded = self.new_temp();
+                                    self.emit(&format!(
+                                        "  {} = load i8*, i8** {}",
+                                        loaded, meta.llvm_name
+                                    ));
+                                    loaded
+                                };
+                                // Enter critical section — acquires the lock
+                                self.emit(&format!(
+                                    "  call void @EnterCriticalSection(i8* {})",
+                                    mutex_ptr
+                                ));
+                                // Return the mutex pointer — the guard IS the mutex pointer
+                                // MemberAccess on the guard will use volatile loads
+                                self.guard_vars.insert(obj_name.clone());
+                                return mutex_ptr;
+                            }
+                        }
+                        "null".to_string()
+                    }
+                    "lock" => {
+                        // unsafe fn — skip locking entirely, return raw pointer
+                        let obj_reg = self.gen_node(object);
+                        obj_reg
+                    }
                     _ => "0".to_string(),
                 }
             }
@@ -2263,6 +2503,14 @@ impl CodeGenerator {
             let (_, _, inner) = Self::strip_ref_prefix(&p.param_type);
             inner == "string"
         });
+        // Any function touching a Mutex is never pure — it's a synchronization point
+        let has_mutex_param = params.iter().any(|p| {
+            let (_, _, inner) = Self::strip_ref_prefix(&p.param_type);
+            inner.starts_with("Mutex<")
+        });
+        if has_mutex_param {
+            return false;
+        }
         for p in params {
             let (is_ref, is_mut, _) = Self::strip_ref_prefix(&p.param_type);
             if (p.is_reference || is_ref) && (p.is_mutable || is_mut) {
@@ -2305,7 +2553,9 @@ impl CodeGenerator {
 
     fn body_is_pure(node: &AstNode) -> bool {
         match node {
-            AstNode::Assignment { .. } | AstNode::ArrayAssignment { .. } => false,
+            AstNode::Assignment { .. }
+            | AstNode::ArrayAssignment { .. }
+            | AstNode::MemberAssignment { .. } => false,
             AstNode::Call { name, args } => {
                 !matches!(
                     name.as_str(),
@@ -2409,10 +2659,13 @@ impl CodeGenerator {
         params: &[Parameter],
         body: &AstNode,
         return_type: &Option<String>,
+        is_unsafe: bool,
     ) -> String {
         self.current_function_vars.clear();
         self.temp_counter = 0;
         self.label_counter = 0;
+        self.is_unsafe_fn = is_unsafe;
+        self.guard_vars.clear();
 
         let escaping = EscapeAnalysis::analyze(params, body);
         self.non_escaping.clear();
@@ -2463,6 +2716,10 @@ impl CodeGenerator {
                             } else {
                                 "i64*".to_string()
                             }
+                        } else if inner_type.starts_with("Mutex<") {
+                            // Mutex is already an i8* heap pointer — passing by reference
+                            // just passes the pointer itself, not a pointer-to-pointer
+                            "i8*".to_string()
                         } else {
                             format!("{}*", self.type_to_llvm(inner_type))
                         }
@@ -2470,11 +2727,15 @@ impl CodeGenerator {
                         self.type_to_llvm(&p.param_type)
                     };
 
+                    let is_mutex_param = inner_type.starts_with("Mutex<");
                     let is_simple_ptr = type_is_ref && !inner_type.starts_with('[');
                     let is_owned_ptr =
                         !type_is_ref && Self::is_pointer_llvm_type(&p.param_type) && !type_is_mut;
 
-                    let attrs = if is_simple_ptr {
+                    // Mutex params: shared across threads, no noalias/readonly
+                    let attrs = if is_mutex_param {
+                        ""
+                    } else if is_simple_ptr {
                         if !type_is_mut {
                             "noalias readonly"
                         } else {
@@ -2671,7 +2932,14 @@ impl CodeGenerator {
                 .map(|m| m.var_type.clone())
                 .unwrap_or_else(|| "int".to_string()),
             AstNode::ArrayLit(_) => "array".to_string(),
-            AstNode::EnumValue { .. } => "enum".to_string(),
+            AstNode::EnumValue { enum_name, .. } => {
+                // Mutex::new(...) looks like EnumValue — return proper Mutex type
+                if enum_name == "Mutex" {
+                    "Mutex<int>".to_string() // inner type unknown here; good enough for is_heap
+                } else {
+                    "enum".to_string()
+                }
+            }
             AstNode::Call { name, .. } => match name.as_str() {
                 "read_file" | "int_to_string" => "string".to_string(),
                 "write_file" => "int".to_string(),
@@ -2688,6 +2956,15 @@ impl CodeGenerator {
                 let obj_type = self.infer_type(object);
                 match method.as_str() {
                     "len" | "char_at" | "get" => "int".to_string(),
+                    "lock" => {
+                        // m.lock() returns MutexGuard<T> where T is the inner type of Mutex<T>
+                        if obj_type.starts_with("Mutex<") {
+                            let inner = &obj_type[6..obj_type.len() - 1];
+                            format!("MutexGuard<{}>", inner)
+                        } else {
+                            obj_type
+                        }
+                    }
                     _ => obj_type,
                 }
             }
@@ -2716,6 +2993,8 @@ impl CodeGenerator {
             "Vec" => "i8*".to_string(),
             "void" => "void".to_string(),
             "enum" => "{ i32, i64 }*".to_string(),
+            t if t.starts_with("Mutex<") => "i8*".to_string(),
+            t if t.starts_with("MutexGuard<") => "i8*".to_string(),
             t if t.starts_with('*') => {
                 let inner = self.type_to_llvm(&t[1..]);
                 format!("{}*", inner)

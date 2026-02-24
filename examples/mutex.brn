@@ -1,0 +1,10 @@
+fn increment(m: &Mutex<int>) {
+    let guard = m.lock();
+    guard.value = guard.value + 1;
+}
+
+fn main() {
+    let m: Mutex<int> = Mutex::new(0);
+    increment(&m);
+    print(42);
+}
