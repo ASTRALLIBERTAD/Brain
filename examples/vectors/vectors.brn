@@ -1,0 +1,17 @@
+export fn vec_example() {
+    let v = vec_new();
+    vec_push(v, 1);
+    vec_push(v, 2);
+    vec_push(v, 3);
+    let len = vec_len(v);
+    print(len);
+    let first = vec_get(v, 0);
+    print(first);
+    vec_set(v, 0, 99);
+    print(vec_get(v, 0));
+    let mut i: int = 0;
+    while i < vec_len(v) {
+        print(vec_get(v, i));
+        i = i + 1;
+    }
+}

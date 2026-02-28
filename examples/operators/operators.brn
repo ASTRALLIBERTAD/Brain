@@ -1,0 +1,24 @@
+export fn operators_example() {
+    let a: int = 10;
+    let b: int = 3;
+    let sum     = a + b;
+    let diff    = a - b;
+    let product = a * b;
+    let divided = a / b;
+    let remain  = a % b;
+    print(sum);
+    print(diff);
+    print(product);
+    print(divided);
+    print(remain);
+    let eq  = a == b;
+    let neq = a != b;
+    let lt  = a < b;
+    let gt  = a > b;
+    let lte = a <= b;
+    let gte = a >= b;
+    let both   = true && false;
+    let either = true || false;
+    print(eq);
+    print(neq);
+}

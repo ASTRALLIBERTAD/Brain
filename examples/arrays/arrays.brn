@@ -1,0 +1,18 @@
+export fn arrays_example() {
+    let nums = [10, 20, 30, 40];
+    let first = nums[0];
+    let last  = nums[3];
+    print(first);
+    print(last);
+}
+
+export fn sum_arr(arr: &[int; 4]) -> int {
+    return arr[0] + arr[1] + arr[2] + arr[3];
+}
+
+export fn fill_arr(arr: &mut [int; 4], val: int) {
+    arr[0] = val;
+    arr[1] = val;
+    arr[2] = val;
+    arr[3] = val;
+}

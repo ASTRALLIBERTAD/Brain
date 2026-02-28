@@ -1,0 +1,20 @@
+export fn if_example(n: int) -> int {
+    if n > 0 {
+        return 1;
+    } else if n < 0 {
+        return -1;
+    } else {
+        return 0;
+    }
+}
+
+export fn loops_example() {
+    let mut i: int = 0;
+    while i < 5 {
+        print(i);
+        i = i + 1;
+    }
+    for n in 0..10 {
+        print(n);
+    }
+}

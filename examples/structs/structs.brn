@@ -1,0 +1,26 @@
+export struct Point {
+    x: int,
+    y: int,
+}
+
+export struct Person {
+    name: string,
+    age: int,
+}
+
+export fn structs_example() {
+    let p = Point { x: 10, y: 20 };
+    print(p.x);
+    print(p.y);
+    let person = Person { name: "Alice", age: 30 };
+    print(person.age);
+}
+
+export fn print_point(p: &Point) {
+    print(p.x);
+    print(p.y);
+}
+
+export fn make_point(x: int, y: int) -> Point {
+    return Point { x: x, y: y };
+}

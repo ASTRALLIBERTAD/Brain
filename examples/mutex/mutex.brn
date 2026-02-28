@@ -1,0 +1,18 @@
+export fn increment(m: &Mutex<int>) {
+    let guard = m.lock();
+    guard.value = guard.value + 1;
+}
+
+export fn mutex_example() {
+    let m: Mutex<int> = Mutex::new(0);
+    increment(&m);
+    increment(&m);
+    increment(&m);
+    let guard = m.lock();
+    print(guard.value);
+}
+
+export unsafe fn fast_read(m: &Mutex<int>) -> int {
+    let guard = m.lock();
+    return guard.value;
+}

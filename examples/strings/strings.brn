@@ -1,0 +1,11 @@
+export fn strings_example() {
+    let s: string = "Hello";
+    let len = s.len();
+    print(len);
+    let n: int = 42;
+    let ns = int_to_string(n);
+    print(ns);
+    let t: string = "World";
+    let joined = s + ", " + t + "!";
+    print(&joined);
+}

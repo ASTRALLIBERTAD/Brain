@@ -206,6 +206,7 @@ pub struct Parser<'a> {
     tokens: Vec<Token>,
     current: usize,
     filename: &'a str,
+    no_struct_init: bool,
 }
 
 impl<'a> Parser<'a> {
@@ -214,6 +215,7 @@ impl<'a> Parser<'a> {
             tokens,
             current: 0,
             filename,
+            no_struct_init: false,
         }
     }
 
@@ -379,7 +381,9 @@ impl<'a> Parser<'a> {
             let field_name = self.consume_identifier("Expected field name")?;
             self.consume(&TokenType::Colon, "Expected ':'")?;
             let field_type = self.parse_type()?;
-            self.consume(&TokenType::Semicolon, "Expected ';'")?;
+            if self.check(&TokenType::Comma) {
+                self.advance();
+            }
 
             fields.push(Field {
                 name: field_name,
@@ -446,7 +450,6 @@ impl<'a> Parser<'a> {
             }
             TokenType::Ampersand => {
                 self.advance();
-                // Handle both &T and &mut T
                 if self.check(&TokenType::Mut) {
                     self.advance();
                     let inner = self.parse_type()?;
@@ -666,7 +669,9 @@ impl<'a> Parser<'a> {
 
     fn parse_if(&mut self) -> Result<AstNode, String> {
         self.consume(&TokenType::If, "Expected 'if'")?;
+        self.no_struct_init = true;
         let condition = Box::new(self.parse_expression()?);
+        self.no_struct_init = false;
         let then_block = Box::new(self.parse_block()?);
 
         let else_block = if self.check(&TokenType::Else) {
@@ -689,7 +694,9 @@ impl<'a> Parser<'a> {
 
     fn parse_while(&mut self) -> Result<AstNode, String> {
         self.consume(&TokenType::While, "Expected 'while'")?;
+        self.no_struct_init = true;
         let condition = Box::new(self.parse_expression()?);
+        self.no_struct_init = false;
         let body = Box::new(self.parse_block()?);
 
         Ok(AstNode::While { condition, body })
@@ -700,7 +707,9 @@ impl<'a> Parser<'a> {
         let variable = self.consume_identifier("Expected loop variable")?;
         self.consume(&TokenType::In, "Expected 'in'")?;
 
+        self.no_struct_init = true;
         let start = self.parse_expression()?;
+        self.no_struct_init = false;
 
         let iterator = if self.check(&TokenType::DotDot) {
             self.advance();
@@ -724,7 +733,9 @@ impl<'a> Parser<'a> {
 
     fn parse_match(&mut self) -> Result<AstNode, String> {
         self.consume(&TokenType::Match, "Expected 'match'")?;
+        self.no_struct_init = true;
         let value = Box::new(self.parse_expression()?);
+        self.no_struct_init = false;
 
         self.consume(&TokenType::LBrace, "Expected '{'")?;
         let mut arms = Vec::new();
@@ -732,7 +743,15 @@ impl<'a> Parser<'a> {
         while !self.check(&TokenType::RBrace) && !self.is_at_end() {
             let pattern = self.parse_pattern()?;
             self.consume(&TokenType::FatArrow, "Expected '=>'")?;
-            let body = self.parse_expression()?;
+            // Arm body: block, return statement, or bare expression
+            let body = if self.check(&TokenType::LBrace) {
+                self.parse_block()?
+            } else if self.check(&TokenType::Return) {
+                self.parse_return()?
+            } else {
+                let expr = self.parse_expression()?;
+                AstNode::ExpressionStatement(Box::new(expr))
+            };
 
             arms.push(MatchArm { pattern, body });
 
@@ -1060,6 +1079,8 @@ impl<'a> Parser<'a> {
                 } else {
                     return Err(self.error("Invalid function call"));
                 }
+            } else if self.check(&TokenType::DotDot) {
+                break;
             } else if self.check(&TokenType::Dot) {
                 self.advance();
                 let field = self.consume_identifier("Expected field or method name")?;
@@ -1087,7 +1108,7 @@ impl<'a> Parser<'a> {
                     array: Box::new(left),
                     index: Box::new(index),
                 };
-            } else if self.check(&TokenType::LBrace) {
+            } else if self.check(&TokenType::LBrace) && !self.no_struct_init {
                 if let AstNode::Identifier { name, .. } = left {
                     self.advance();
                     let fields = self.parse_field_inits()?;

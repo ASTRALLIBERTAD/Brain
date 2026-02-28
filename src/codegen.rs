@@ -20,7 +20,6 @@ pub struct CodeGenerator {
     non_escaping: std::collections::HashSet<String>,
     current_binding: Option<String>,
     is_unsafe_fn: bool,
-    // var names that hold a MutexGuard — loads/stores through these use volatile
     guard_vars: std::collections::HashSet<String>,
 }
 
@@ -62,8 +61,6 @@ impl EscapeAnalysis {
     }
 
     fn visit_body(&mut self, params: &[Parameter], body: &AstNode) {
-        // Params passed by value that are pointer types always escape
-        // (they came from the caller). Ref params are fine — not our allocation.
         for p in params {
             let (is_ref, _, _) = CodeGenerator::strip_ref_prefix(&p.param_type);
             if !is_ref && !p.is_reference {
@@ -256,6 +253,11 @@ impl CodeGenerator {
                         .collect();
                     self.struct_types.insert(name.clone(), field_info);
                 }
+                if let AstNode::EnumDef { name, variants } = node {
+                    let variant_names: Vec<String> =
+                        variants.iter().map(|v| v.name.clone()).collect();
+                    self.enum_types.insert(name.clone(), variant_names);
+                }
             }
         }
 
@@ -272,10 +274,6 @@ impl CodeGenerator {
             }
         }
 
-        // Dead code elimination: only emit functions and top-level let bindings
-        // that are reachable from main. Walk the call graph starting at "main",
-        // collect every called name transitively, then skip anything not in
-        // that set during codegen.
         let reachable = if let AstNode::Program(nodes) = ast {
             Self::collect_reachable(nodes)
         } else {
@@ -910,7 +908,6 @@ impl CodeGenerator {
         self.emit("}");
         self.emit("");
 
-        // brn_print_int: on Windows uses WriteFile, on Unix uses puts
         if cfg!(target_os = "windows") {
             self.emit("define void @brn_print_int(i64 %n) {");
             self.emit("  %bpi_buf = alloca [32 x i8]");
@@ -1095,12 +1092,14 @@ impl CodeGenerator {
                     .map(|b| self.non_escaping.contains(b))
                     .unwrap_or(false);
 
-                let struct_ptr = self.new_temp();
+                let struct_ptr;
                 if stack_promote {
+                    struct_ptr = self.new_temp();
                     self.emit(&format!("  {} = alloca %{}", struct_ptr, name));
                 } else {
                     let size = (num_fields as i64) * 8;
                     let raw_ptr = self.new_temp();
+                    struct_ptr = self.new_temp();
                     self.emit(&format!("  {} = call i8* @malloc(i64 {})", raw_ptr, size));
                     self.emit(&format!(
                         "  {} = bitcast i8* {} to %{}*",
@@ -1135,7 +1134,6 @@ impl CodeGenerator {
             }
 
             AstNode::MemberAccess { object, field } => {
-                // Guard variable access: guard.value reads the mutex's inner value with volatile
                 if let AstNode::Identifier { name: obj_name, .. } = object.as_ref() {
                     if (self.guard_vars.contains(obj_name.as_str())
                         || self
@@ -1146,13 +1144,9 @@ impl CodeGenerator {
                         && field == "value"
                         && !self.is_unsafe_fn
                     {
-                        // Guard is the mutex raw pointer; value is at byte offset 40
                         let guard_ptr = if let Some(meta) =
                             self.current_function_vars.get(obj_name.as_str()).cloned()
                         {
-                            // If the guard var holds an i8* directly (stored from lock()),
-                            // load it from the alloca slot. But if it IS a ref param (%arg_X),
-                            // it's already the i8* value.
                             if meta.llvm_name.starts_with("%arg_") {
                                 meta.llvm_name.clone()
                             } else {
@@ -1174,7 +1168,6 @@ impl CodeGenerator {
                         let val_ptr = self.new_temp();
                         self.emit(&format!("  {} = bitcast i8* {} to i64*", val_ptr, val_gep));
                         let result = self.new_temp();
-                        // volatile load — prevents register caching across lock boundary
                         self.emit(&format!(
                             "  {} = load volatile i64, i64* {}",
                             result, val_ptr
@@ -1218,23 +1211,18 @@ impl CodeGenerator {
                 variant,
                 value,
             } => {
-                // Mutex::new(initial_value) — allocate and initialize a CRITICAL_SECTION
                 if enum_name == "Mutex" && variant == "new" {
                     let inner_val = if let Some(v) = value {
                         self.gen_node(v)
                     } else {
                         "0".to_string()
                     };
-                    // CRITICAL_SECTION on Windows is 40 bytes; inner value is i64 (8 bytes)
-                    // Layout: [cs_bytes: 40 x i8 | value: i64]
                     let mutex_raw = self.new_temp();
                     self.emit(&format!("  {} = call i8* @malloc(i64 48)", mutex_raw));
-                    // InitializeCriticalSection on the first 40 bytes
                     self.emit(&format!(
                         "  call void @InitializeCriticalSection(i8* {})",
                         mutex_raw
                     ));
-                    // Store initial value at offset 40
                     let val_gep = self.new_temp();
                     self.emit(&format!(
                         "  {} = getelementptr i8, i8* {}, i64 40",
@@ -1351,18 +1339,34 @@ impl CodeGenerator {
                                 }
 
                                 self.block_terminated = false;
-                                self.gen_node(&arm.body);
+                                let arm_val = self.gen_node(&arm.body);
                                 if !self.block_terminated {
-                                    self.emit(&format!("  br label %{}", end_label));
+                                    if self.current_function_return_type != "void" {
+                                        self.emit(&format!(
+                                            "  ret {} {}",
+                                            self.current_function_return_type, arm_val
+                                        ));
+                                        self.block_terminated = true;
+                                    } else {
+                                        self.emit(&format!("  br label %{}", end_label));
+                                    }
                                 }
                             }
                             Pattern::Wildcard | Pattern::Identifier(_) => {
                                 self.emit(&format!("  br label %{}", arm_label));
                                 self.emit(&format!("{}:", arm_label));
                                 self.block_terminated = false;
-                                self.gen_node(&arm.body);
+                                let arm_val = self.gen_node(&arm.body);
                                 if !self.block_terminated {
-                                    self.emit(&format!("  br label %{}", end_label));
+                                    if self.current_function_return_type != "void" {
+                                        self.emit(&format!(
+                                            "  ret {} {}",
+                                            self.current_function_return_type, arm_val
+                                        ));
+                                        self.block_terminated = true;
+                                    } else {
+                                        self.emit(&format!("  br label %{}", end_label));
+                                    }
                                 }
                             }
                             _ => {}
@@ -1394,9 +1398,17 @@ impl CodeGenerator {
                                 ));
                                 self.emit(&format!("{}:", arm_label));
                                 self.block_terminated = false;
-                                self.gen_node(&arm.body);
+                                let arm_val = self.gen_node(&arm.body);
                                 if !self.block_terminated {
-                                    self.emit(&format!("  br label %{}", end_label));
+                                    if self.current_function_return_type != "void" {
+                                        self.emit(&format!(
+                                            "  ret {} {}",
+                                            self.current_function_return_type, arm_val
+                                        ));
+                                        self.block_terminated = true;
+                                    } else {
+                                        self.emit(&format!("  br label %{}", end_label));
+                                    }
                                 }
                             }
                             Pattern::StringPattern(s) => {
@@ -1420,18 +1432,34 @@ impl CodeGenerator {
                                 ));
                                 self.emit(&format!("{}:", arm_label));
                                 self.block_terminated = false;
-                                self.gen_node(&arm.body);
+                                let arm_val = self.gen_node(&arm.body);
                                 if !self.block_terminated {
-                                    self.emit(&format!("  br label %{}", end_label));
+                                    if self.current_function_return_type != "void" {
+                                        self.emit(&format!(
+                                            "  ret {} {}",
+                                            self.current_function_return_type, arm_val
+                                        ));
+                                        self.block_terminated = true;
+                                    } else {
+                                        self.emit(&format!("  br label %{}", end_label));
+                                    }
                                 }
                             }
                             Pattern::Wildcard | Pattern::Identifier(_) => {
                                 self.emit(&format!("  br label %{}", arm_label));
                                 self.emit(&format!("{}:", arm_label));
                                 self.block_terminated = false;
-                                self.gen_node(&arm.body);
+                                let arm_val = self.gen_node(&arm.body);
                                 if !self.block_terminated {
-                                    self.emit(&format!("  br label %{}", end_label));
+                                    if self.current_function_return_type != "void" {
+                                        self.emit(&format!(
+                                            "  ret {} {}",
+                                            self.current_function_return_type, arm_val
+                                        ));
+                                        self.block_terminated = true;
+                                    } else {
+                                        self.emit(&format!("  br label %{}", end_label));
+                                    }
                                 }
                             }
                             _ => {}
@@ -1463,7 +1491,6 @@ impl CodeGenerator {
                 self.current_binding = None;
                 let var_type = self.infer_type(value);
 
-                // If the value is a .lock() call, register this binding as a guard
                 if let AstNode::MethodCall { method, .. } = value.as_ref() {
                     if method == "lock" && !self.is_unsafe_fn {
                         self.guard_vars.insert(name.clone());
@@ -1474,10 +1501,6 @@ impl CodeGenerator {
                 let is_struct = self.struct_types.contains_key(&var_type);
                 let stack_promote = self.non_escaping.contains(name);
 
-                // A value is heap-tracked only when it actually lives on the heap
-                // AND it isn't being stack-promoted by escape analysis.
-                // Mutex<T> is intentionally excluded — it's long-lived shared state,
-                // not subject to automatic scope-exit free.
                 let is_mutex =
                     var_type.starts_with("Mutex<") || var_type.starts_with("MutexGuard<");
                 let is_heap = !stack_promote
@@ -2166,11 +2189,9 @@ impl CodeGenerator {
             AstNode::Reference(expr) => match expr.as_ref() {
                 AstNode::Identifier { name, .. } => {
                     if let Some(meta) = self.current_function_vars.get(name).cloned() {
-                        // Arrays and array refs: llvm_name IS already the pointer
                         if meta.var_type.starts_with('[') || meta.var_type == "array" {
                             return meta.llvm_name;
                         }
-                        // For everything else, load the value to get the address
                         let result = self.new_temp();
                         let llvm_type_str = self.type_to_llvm(&meta.var_type);
                         let llvm_name = meta.llvm_name.clone();
@@ -2449,13 +2470,9 @@ impl CodeGenerator {
                         ));
                         "0".to_string()
                     }
-                    // mutex.lock() — EnterCriticalSection, return pointer to mutex struct
-                    // as a MutexGuard (just the pointer; unlock happens at scope exit)
                     "lock" if !self.is_unsafe_fn => {
                         if let AstNode::Identifier { name: obj_name, .. } = object.as_ref() {
                             if let Some(meta) = self.current_function_vars.get(obj_name).cloned() {
-                                // Ref params (llvm_name = %arg_X) hold the i8* directly.
-                                // Local vars (llvm_name = %N) are alloca slots holding i8*.
                                 let mutex_ptr = if meta.llvm_name.starts_with("%arg_") {
                                     meta.llvm_name.clone()
                                 } else {
@@ -2466,13 +2483,10 @@ impl CodeGenerator {
                                     ));
                                     loaded
                                 };
-                                // Enter critical section — acquires the lock
                                 self.emit(&format!(
                                     "  call void @EnterCriticalSection(i8* {})",
                                     mutex_ptr
                                 ));
-                                // Return the mutex pointer — the guard IS the mutex pointer
-                                // MemberAccess on the guard will use volatile loads
                                 self.guard_vars.insert(obj_name.clone());
                                 return mutex_ptr;
                             }
@@ -2480,7 +2494,6 @@ impl CodeGenerator {
                         "null".to_string()
                     }
                     "lock" => {
-                        // unsafe fn — skip locking entirely, return raw pointer
                         let obj_reg = self.gen_node(object);
                         obj_reg
                     }
@@ -2717,8 +2730,6 @@ impl CodeGenerator {
                                 "i64*".to_string()
                             }
                         } else if inner_type.starts_with("Mutex<") {
-                            // Mutex is already an i8* heap pointer — passing by reference
-                            // just passes the pointer itself, not a pointer-to-pointer
                             "i8*".to_string()
                         } else {
                             format!("{}*", self.type_to_llvm(inner_type))
@@ -2732,7 +2743,6 @@ impl CodeGenerator {
                     let is_owned_ptr =
                         !type_is_ref && Self::is_pointer_llvm_type(&p.param_type) && !type_is_mut;
 
-                    // Mutex params: shared across threads, no noalias/readonly
                     let attrs = if is_mutex_param {
                         ""
                     } else if is_simple_ptr {
@@ -2834,6 +2844,8 @@ impl CodeGenerator {
             self.emit("  ret i32 0");
         } else if ret_type == "void" && !self.block_terminated {
             self.emit("  ret void");
+        } else if !self.block_terminated {
+            self.emit("  unreachable");
         }
 
         self.emit("}");
@@ -2862,8 +2874,6 @@ impl CodeGenerator {
 
         let new_ptr = self.new_temp();
         if use_stack {
-            // Variable-length stack allocation — no malloc, no free needed.
-            // Safe because the binding was proven non-escaping by EscapeAnalysis.
             self.emit(&format!(
                 "  {} = alloca i8, i64 {}",
                 new_ptr, total_plus_one
@@ -2933,9 +2943,8 @@ impl CodeGenerator {
                 .unwrap_or_else(|| "int".to_string()),
             AstNode::ArrayLit(_) => "array".to_string(),
             AstNode::EnumValue { enum_name, .. } => {
-                // Mutex::new(...) looks like EnumValue — return proper Mutex type
                 if enum_name == "Mutex" {
-                    "Mutex<int>".to_string() // inner type unknown here; good enough for is_heap
+                    "Mutex<int>".to_string()
                 } else {
                     "enum".to_string()
                 }
@@ -2957,7 +2966,6 @@ impl CodeGenerator {
                 match method.as_str() {
                     "len" | "char_at" | "get" => "int".to_string(),
                     "lock" => {
-                        // m.lock() returns MutexGuard<T> where T is the inner type of Mutex<T>
                         if obj_type.starts_with("Mutex<") {
                             let inner = &obj_type[6..obj_type.len() - 1];
                             format!("MutexGuard<{}>", inner)
@@ -2979,6 +2987,8 @@ impl CodeGenerator {
             "i8" => "char".to_string(),
             "i8*" => "string".to_string(),
             "void" => "void".to_string(),
+            "{ i32, i64 }*" => "enum".to_string(),
+            s if s.starts_with('%') && s.ends_with('*') => s[1..s.len() - 1].to_string(),
             _ => "int".to_string(),
         }
     }
@@ -3000,6 +3010,7 @@ impl CodeGenerator {
                 format!("{}*", inner)
             }
             t if self.struct_types.contains_key(t) => format!("%{}*", t),
+            t if self.enum_types.contains_key(t) => "{ i32, i64 }*".to_string(),
             _ => "i64".to_string(),
         }
     }

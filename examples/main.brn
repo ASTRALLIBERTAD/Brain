@@ -1,0 +1,63 @@
+import { types_example } from "types/types.brn";
+import { operators_example } from "operators/operators.brn";
+import { if_example, loops_example } from "control_flow/control_flow.brn";
+import { greet, add, is_between, fib } from "functions/functions.brn";
+import { strings_example } from "strings/strings.brn";
+import { arrays_example, sum_arr, fill_arr } from "arrays/arrays.brn";
+import { vec_example } from "vectors/vectors.brn";
+import { Point, Person, structs_example, print_point, make_point } from "structs/structs.brn";
+import { Direction, Shape, match_direction, describe_shape } from "enums/enums.brn";
+import { consume_string, borrow_string, ownership_example } from "ownership/ownership.brn";
+import { files_example } from "files/files.brn";
+import { increment, mutex_example } from "mutex/mutex.brn";
+
+fn main() {
+    // ── Types ────────────────────────────────────────────────────────────────
+    types_example();
+
+    // ── Operators ────────────────────────────────────────────────────────────
+    operators_example();
+
+    // ── Control flow ─────────────────────────────────────────────────────────
+    let sign = if_example(-5);
+    print(sign);
+    loops_example();
+
+    // ── Functions ────────────────────────────────────────────────────────────
+    greet("Brain");
+    print(add(7, 8));
+    print(fib(10));
+    print(is_between(5, 1, 10));
+
+    // ── Strings ──────────────────────────────────────────────────────────────
+    strings_example();
+
+    // ── Arrays ───────────────────────────────────────────────────────────────
+    arrays_example();
+    let mut arr = [1, 2, 3, 4];
+    fill_arr(&arr, 7);
+    print(sum_arr(&arr));
+
+    // ── Vectors ──────────────────────────────────────────────────────────────
+    vec_example();
+
+    // ── Structs ──────────────────────────────────────────────────────────────
+    structs_example();
+    let pt = make_point(3, 4);
+    print_point(&pt);
+
+    // ── Enums ────────────────────────────────────────────────────────────────
+    let d = Direction::South;
+    print(match_direction(d));
+    let circle = Shape::Circle(5);
+    print(describe_shape(circle));
+
+    // ── Ownership ────────────────────────────────────────────────────────────
+    ownership_example();
+
+    // ── Files ────────────────────────────────────────────────────────────────
+    files_example();
+
+    // ── Mutex ────────────────────────────────────────────────────────────────
+    mutex_example();
+}

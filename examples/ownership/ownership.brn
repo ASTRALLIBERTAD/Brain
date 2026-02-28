@@ -1,0 +1,14 @@
+export fn consume_string(s: string) {
+    print(s);
+}
+
+export fn borrow_string(s: &string) {
+    print(s);
+}
+
+export fn ownership_example() {
+    let s = "hello world";
+    borrow_string(&s);
+    borrow_string(&s);
+    consume_string(s);
+}

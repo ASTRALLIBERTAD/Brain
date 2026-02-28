@@ -1,0 +1,27 @@
+export enum Direction {
+    North,
+    South,
+    East,
+    West,
+}
+
+export enum Shape {
+    Circle(int),
+    Square(int),
+}
+
+export fn match_direction(d: Direction) -> int {
+    match d {
+        Direction::North => 0,
+        Direction::South => 1,
+        Direction::East  => 2,
+        Direction::West  => 3,
+    }
+}
+
+export fn describe_shape(s: Shape) -> int {
+    match s {
+        Shape::Circle(r) => r * r,
+        Shape::Square(side) => side * side,
+    }
+}

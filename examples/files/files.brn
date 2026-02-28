@@ -1,0 +1,5 @@
+export fn files_example() {
+    write_file("output.txt", "Hello from Brain!");
+    let contents = read_file("output.txt");
+    print(contents);
+}

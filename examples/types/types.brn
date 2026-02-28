@@ -1,0 +1,12 @@
+export fn types_example() {
+    let x: int = 42;
+    let y: int = -10;
+    let flag: bool = true;
+    let other: bool = false;
+    let c: char = 'A';
+    let s: string = "hello";
+    let mut counter: int = 0;
+    counter = counter + 1;
+    counter = counter + 1;
+    print(counter);
+}
