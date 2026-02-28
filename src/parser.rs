@@ -41,6 +41,7 @@ pub enum AstNode {
     StructDef {
         name: String,
         fields: Vec<Field>,
+        is_exported: bool,
     },
     StructInit {
         name: String,
@@ -50,6 +51,7 @@ pub enum AstNode {
     EnumDef {
         name: String,
         variants: Vec<EnumVariant>,
+        is_exported: bool,
     },
     EnumValue {
         enum_name: String,
@@ -294,9 +296,29 @@ impl<'a> Parser<'a> {
             self.parse_function(true, false)
         } else if self.check(&TokenType::Let) {
             self.parse_let_binding_exported(true)
+        } else if self.check(&TokenType::Struct) {
+            let mut node = self.parse_struct_def()?;
+            if let AstNode::StructDef {
+                ref mut is_exported,
+                ..
+            } = node
+            {
+                *is_exported = true;
+            }
+            Ok(node)
+        } else if self.check(&TokenType::Enum) {
+            let mut node = self.parse_enum_def()?;
+            if let AstNode::EnumDef {
+                ref mut is_exported,
+                ..
+            } = node
+            {
+                *is_exported = true;
+            }
+            Ok(node)
         } else {
             Err(self
-                .error("'export' can only be applied to 'fn', 'unsafe fn', or 'let' declarations"))
+                .error("'export' can only be applied to 'fn', 'unsafe fn', 'let', 'struct', or 'enum' declarations"))
         }
     }
 
@@ -393,7 +415,11 @@ impl<'a> Parser<'a> {
 
         self.consume(&TokenType::RBrace, "Expected '}'")?;
 
-        Ok(AstNode::StructDef { name, fields })
+        Ok(AstNode::StructDef {
+            name,
+            fields,
+            is_exported: false,
+        })
     }
 
     fn parse_enum_def(&mut self) -> Result<AstNode, String> {
@@ -427,7 +453,11 @@ impl<'a> Parser<'a> {
 
         self.consume(&TokenType::RBrace, "Expected '}'")?;
 
-        Ok(AstNode::EnumDef { name, variants })
+        Ok(AstNode::EnumDef {
+            name,
+            variants,
+            is_exported: false,
+        })
     }
 
     fn parse_type(&mut self) -> Result<String, String> {

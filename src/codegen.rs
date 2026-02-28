@@ -246,14 +246,14 @@ impl CodeGenerator {
     pub fn generate(&mut self, ast: &AstNode) -> String {
         if let AstNode::Program(nodes) = ast {
             for node in nodes {
-                if let AstNode::StructDef { name, fields } = node {
+                if let AstNode::StructDef { name, fields, .. } = node {
                     let field_info: Vec<(String, String)> = fields
                         .iter()
                         .map(|f| (f.name.clone(), f.field_type.clone()))
                         .collect();
                     self.struct_types.insert(name.clone(), field_info);
                 }
-                if let AstNode::EnumDef { name, variants } = node {
+                if let AstNode::EnumDef { name, variants, .. } = node {
                     let variant_names: Vec<String> =
                         variants.iter().map(|v| v.name.clone()).collect();
                     self.enum_types.insert(name.clone(), variant_names);
@@ -908,6 +908,7 @@ impl CodeGenerator {
         self.emit("}");
         self.emit("");
 
+        // brn_print_int: on Windows uses WriteFile, on Unix uses puts
         if cfg!(target_os = "windows") {
             self.emit("define void @brn_print_int(i64 %n) {");
             self.emit("  %bpi_buf = alloca [32 x i8]");
@@ -1168,6 +1169,7 @@ impl CodeGenerator {
                         let val_ptr = self.new_temp();
                         self.emit(&format!("  {} = bitcast i8* {} to i64*", val_ptr, val_gep));
                         let result = self.new_temp();
+                        // volatile load — prevents register caching across lock boundary
                         self.emit(&format!(
                             "  {} = load volatile i64, i64* {}",
                             result, val_ptr
@@ -1200,7 +1202,7 @@ impl CodeGenerator {
                 "0".to_string()
             }
 
-            AstNode::EnumDef { name, variants } => {
+            AstNode::EnumDef { name, variants, .. } => {
                 let variant_names: Vec<String> = variants.iter().map(|v| v.name.clone()).collect();
                 self.enum_types.insert(name.clone(), variant_names);
                 "0".to_string()
@@ -1491,6 +1493,7 @@ impl CodeGenerator {
                 self.current_binding = None;
                 let var_type = self.infer_type(value);
 
+                // If the value is a .lock() call, register this binding as a guard
                 if let AstNode::MethodCall { method, .. } = value.as_ref() {
                     if method == "lock" && !self.is_unsafe_fn {
                         self.guard_vars.insert(name.clone());
@@ -2218,6 +2221,13 @@ impl CodeGenerator {
                         let result = self.new_temp();
                         self.emit(&format!("  {} = call i32 @puts(i8* {})", result, arg_reg));
                         result
+                    }
+                    "bool" => {
+                        let arg_reg = self.gen_node(&args[0]);
+                        let ext = self.new_temp();
+                        self.emit(&format!("  {} = zext i1 {} to i64", ext, arg_reg));
+                        self.emit(&format!("  call void @brn_print_int(i64 {})", ext));
+                        "0".to_string()
                     }
                     _ => {
                         let arg_reg = self.gen_node(&args[0]);

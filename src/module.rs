@@ -55,9 +55,10 @@ impl ModuleCache {
             .all_definitions
             .iter()
             .filter(|node| match node {
-                AstNode::FunctionDef { name, .. } | AstNode::LetBinding { name, .. } => {
-                    requested.contains(name.as_str())
-                }
+                AstNode::FunctionDef { name, .. }
+                | AstNode::LetBinding { name, .. }
+                | AstNode::StructDef { name, .. }
+                | AstNode::EnumDef { name, .. } => requested.contains(name.as_str()),
                 _ => true,
             })
             .cloned()
@@ -134,7 +135,10 @@ impl ModuleCache {
                 }
                 for node in &dep_exports.all_definitions {
                     match node {
-                        AstNode::FunctionDef { name, .. } | AstNode::LetBinding { name, .. } => {
+                        AstNode::FunctionDef { name, .. }
+                        | AstNode::LetBinding { name, .. }
+                        | AstNode::StructDef { name, .. }
+                        | AstNode::EnumDef { name, .. } => {
                             if seen_names.insert(name.clone()) {
                                 all_definitions.push(node.clone());
                             }
@@ -162,6 +166,28 @@ impl ModuleCache {
                     }
 
                     AstNode::LetBinding {
+                        name, is_exported, ..
+                    } => {
+                        if *is_exported {
+                            exported_names.insert(name.clone());
+                        }
+                        if seen_names.insert(name.clone()) {
+                            all_definitions.push(node);
+                        }
+                    }
+
+                    AstNode::StructDef {
+                        name, is_exported, ..
+                    } => {
+                        if *is_exported {
+                            exported_names.insert(name.clone());
+                        }
+                        if seen_names.insert(name.clone()) {
+                            all_definitions.push(node);
+                        }
+                    }
+
+                    AstNode::EnumDef {
                         name, is_exported, ..
                     } => {
                         if *is_exported {
