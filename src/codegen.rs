@@ -1528,6 +1528,20 @@ impl CodeGenerator {
                     return value_reg;
                 }
 
+                if self.struct_types.contains_key(&var_type) && !is_heap {
+                    self.current_function_vars.insert(
+                        name.clone(),
+                        VarMetadata {
+                            llvm_name: value_reg.clone(),
+                            var_type,
+                            is_heap: false,
+                            array_size: None,
+                            is_string_literal,
+                        },
+                    );
+                    return value_reg;
+                }
+
                 let ptr = self.new_temp();
                 let llvm_type_str = self.type_to_llvm(&var_type);
                 self.emit(&format!("  {} = alloca {}", ptr, llvm_type_str));
@@ -2172,14 +2186,20 @@ impl CodeGenerator {
 
             AstNode::Identifier { name, .. } => {
                 if let Some(meta) = self.current_function_vars.get(name).cloned() {
-                    let result = self.new_temp();
-                    let llvm_type_str = self.type_to_llvm(&meta.var_type);
-                    let llvm_name = meta.llvm_name.clone();
-                    self.emit(&format!(
-                        "  {} = load {}, {}* {}",
-                        result, llvm_type_str, llvm_type_str, llvm_name
-                    ));
-                    result
+                    if meta.llvm_name.starts_with("%arg_") {
+                        meta.llvm_name.clone()
+                    } else if self.struct_types.contains_key(&meta.var_type) && !meta.is_heap {
+                        meta.llvm_name.clone()
+                    } else {
+                        let result = self.new_temp();
+                        let llvm_type_str = self.type_to_llvm(&meta.var_type);
+                        let llvm_name = meta.llvm_name.clone();
+                        self.emit(&format!(
+                            "  {} = load {}, {}* {}",
+                            result, llvm_type_str, llvm_type_str, llvm_name
+                        ));
+                        result
+                    }
                 } else {
                     eprintln!(
                         "CODEGEN ERROR: Variable '{}' not found in current scope!",
@@ -2193,6 +2213,12 @@ impl CodeGenerator {
                 AstNode::Identifier { name, .. } => {
                     if let Some(meta) = self.current_function_vars.get(name).cloned() {
                         if meta.var_type.starts_with('[') || meta.var_type == "array" {
+                            return meta.llvm_name;
+                        }
+                        if self.struct_types.contains_key(&meta.var_type) && !meta.is_heap {
+                            return meta.llvm_name;
+                        }
+                        if meta.llvm_name.starts_with("%arg_") {
                             return meta.llvm_name;
                         }
                         let result = self.new_temp();
@@ -2580,24 +2606,17 @@ impl CodeGenerator {
             | AstNode::ArrayAssignment { .. }
             | AstNode::MemberAssignment { .. } => false,
             AstNode::Call { name, args } => {
-                !matches!(
+                let known_pure = matches!(
                     name.as_str(),
-                    "print"
-                        | "println"
-                        | "print_int"
-                        | "println_int"
-                        | "print_bool"
-                        | "println_bool"
-                        | "print_char"
-                        | "println_char"
-                        | "read_file"
-                        | "write_file"
-                        | "vec_push"
-                        | "vec_set"
-                        | "send"
-                        | "recv"
-                        | "spawn"
-                ) && args.iter().all(Self::body_is_pure)
+                    "vec_new"
+                        | "vec_get"
+                        | "vec_len"
+                        | "int_to_string"
+                        | "fib"
+                        | "add"
+                        | "is_between"
+                );
+                known_pure && args.iter().all(Self::body_is_pure)
             }
             AstNode::Program(nodes) | AstNode::Block(nodes) => nodes.iter().all(Self::body_is_pure),
             AstNode::FunctionDef { body, .. } => Self::body_is_pure(body),
@@ -2742,7 +2761,12 @@ impl CodeGenerator {
                         } else if inner_type.starts_with("Mutex<") {
                             "i8*".to_string()
                         } else {
-                            format!("{}*", self.type_to_llvm(inner_type))
+                            let base = self.type_to_llvm(inner_type);
+                            if base.ends_with('*') {
+                                base
+                            } else {
+                                format!("{}*", base)
+                            }
                         }
                     } else {
                         self.type_to_llvm(&p.param_type)
