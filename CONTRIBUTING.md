@@ -38,8 +38,8 @@ For small fixes (typos, documentation, example programs), feel free to open a PR
 ### Building Locally
 
 ```bash
-git clone https://github.com/ASTRALLIBERTAD/brain.git
-cd brain
+git clone https://github.com/ASTRALLIBERTAD/Brain.git
+cd Brain
 cargo build --release
 ```
 
