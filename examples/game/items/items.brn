@@ -1,0 +1,38 @@
+// ItemKind encodes the item type.
+// HealthPotion, AttackScroll, DefenseAmulet carry no payload.
+// Gold carries an int amount encoded as a separate field.
+export struct Item {
+    kind: int,   // 0=HealthPotion 1=AttackScroll 2=DefenseAmulet 3=Gold
+    amount: int, // used by Gold (kind=3), ignored otherwise
+    name: string,
+}
+
+export fn make_health_potion() -> Item {
+    return Item { kind: 0, amount: 20, name: "Health Potion" };
+}
+
+export fn make_attack_scroll() -> Item {
+    return Item { kind: 1, amount: 3, name: "Attack Scroll" };
+}
+
+export fn make_defense_amulet() -> Item {
+    return Item { kind: 2, amount: 2, name: "Defense Amulet" };
+}
+
+export fn make_gold_pile(amount: int) -> Item {
+    return Item { kind: 3, amount: amount, name: "Gold Pile" };
+}
+
+// Returns true if the item was consumed (removed from inventory).
+// Caller must apply stat changes based on the returned kind.
+export fn describe_item(item: &Item) {
+    if item.kind == 0 {
+        print("  " + item.name + " - Restores " + int_to_string(item.amount) + " HP");
+    } else if item.kind == 1 {
+        print("  " + item.name + " - Permanently increases Attack by " + int_to_string(item.amount));
+    } else if item.kind == 2 {
+        print("  " + item.name + " - Permanently increases Defense by " + int_to_string(item.amount));
+    } else if item.kind == 3 {
+        print("  " + item.name + " - Worth " + int_to_string(item.amount) + " gold");
+    }
+}

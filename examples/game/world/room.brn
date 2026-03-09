@@ -1,0 +1,66 @@
+export struct Room {
+    id: int,
+    description: string,
+    north: int,      // id of room to north, -1 = no exit
+    south: int,
+    east: int,
+    west: int,
+    enemy_kind: int, // 0=none 1=Goblin 2=Skeleton 3=Orc 4=Troll 5=DarkKnight 6=DragonBoss
+    item_kind: int,  // 0=none 1=HealthPotion 2=AttackScroll 3=DefenseAmulet 4=Gold
+    item_amount: int,
+    visited: bool,
+    has_stairs: bool,
+    cleared: bool,   // enemy defeated or room had none
+}
+
+export fn make_room(id: int, desc: string, n: int, s: int, e: int, w: int, enemy: int, item: int, item_amt: int, stairs: bool) -> Room {
+    return Room {
+        id: id,
+        description: desc,
+        north: n,
+        south: s,
+        east: e,
+        west: w,
+        enemy_kind: enemy,
+        item_kind: item,
+        item_amount: item_amt,
+        visited: false,
+        has_stairs: stairs,
+        cleared: enemy == 0,
+    };
+}
+
+export fn print_room(r: &Room) {
+    print("");
+    print("========================================");
+    print(r.description);
+    print("----------------------------------------");
+    let north = "Exits: [N]";
+    let south = "Exits: [S]";
+    let west = "Exits: [W]";
+    let east = "Exits: [E]";
+    let mut exits = "";
+    if r.north != -1 {
+        exits = north;
+    }
+    if r.south != -1 {
+        exits = south; 
+    }
+    if r.east != -1 {
+        exits = east;
+    }
+    if r.west != -1 {
+        exits = west;
+    }
+    print(exits);
+    if r.has_stairs {
+        print("  You see stone stairs leading deeper into the dungeon.");
+    }
+    if r.enemy_kind != 0 && !r.cleared {
+        print("  ! An enemy lurks here !");
+    }
+    if r.item_kind != 0 {
+        print("  * Something glints on the floor *");
+    }
+    print("========================================");
+}

@@ -1,0 +1,89 @@
+export struct Player {
+    name: string,
+    hp: int,
+    max_hp: int,
+    attack: int,
+    defense: int,
+    level: int,
+    xp: int,
+    xp_to_next: int,
+    gold: int,
+    floor: int,
+}
+
+export fn make_player(name: string) -> Player {
+    return Player {
+        name: name,
+        hp: 30,
+        max_hp: 30,
+        attack: 8,
+        defense: 3,
+        level: 1,
+        xp: 0,
+        xp_to_next: 10,
+        gold: 0,
+        floor: 1,
+    };
+}
+
+export fn player_is_alive(p: &Player) -> bool {
+    return p.hp > 0;
+}
+
+export fn player_take_damage(p: &mut Player, amount: int) {
+    let dmg = amount - p.defense;
+    let mut actual = 0;
+    if dmg < 1 { actual = 1; } else { actual = dmg; }
+    p.hp = p.hp - actual;
+    if p.hp < 0 {
+        p.hp = 0;
+    }
+    print("You take " + int_to_string(actual) + " damage! HP: " + int_to_string(p.hp) + "/" + int_to_string(p.max_hp));
+}
+
+export fn player_heal(p: &mut Player, amount: int) {
+    p.hp = p.hp + amount;
+    if p.hp > p.max_hp {
+      p.hp = p.max_hp;
+    }
+    print("You recover " + int_to_string(amount) + " HP! HP: " + int_to_string(p.hp) + "/" + int_to_string(p.max_hp));
+}
+
+export fn player_gain_xp(p: &mut Player, amount: int) {
+    p.xp = p.xp + amount;
+    print("You gained " + int_to_string(amount) + " XP!");
+    if p.xp >= p.xp_to_next {
+        player_level_up(p);
+    }
+}
+
+export fn player_level_up(p: &mut Player) {
+    p.level = p.level + 1;
+    p.xp = p.xp - p.xp_to_next;
+    p.xp_to_next = p.xp_to_next + 10;
+    p.max_hp = p.max_hp + 10;
+    p.hp = p.max_hp;
+    p.attack = p.attack + 3;
+    p.defense = p.defense + 1;
+    print("*** LEVEL UP! You are now level " + int_to_string(p.level) + "! ***");
+    print("  Max HP: " + int_to_string(p.max_hp));
+    print("  Attack: " + int_to_string(p.attack));
+    print("  Defense: " + int_to_string(p.defense));
+}
+
+export fn player_gain_gold(p: &mut Player, amount: int) {
+    p.gold = p.gold + amount;
+    print("You found " + int_to_string(amount) + " gold! Total: " + int_to_string(p.gold));
+}
+
+export fn print_player_stats(p: &Player) {
+    print("========== " + p.name + " ==========");
+    print("  Level   : " + int_to_string(p.level));
+    print("  HP      : " + int_to_string(p.hp) + "/" + int_to_string(p.max_hp));
+    print("  Attack  : " + int_to_string(p.attack));
+    print("  Defense : " + int_to_string(p.defense));
+    print("  XP      : " + int_to_string(p.xp) + "/" + int_to_string(p.xp_to_next));
+    print("  Gold    : " + int_to_string(p.gold));
+    print("  Floor   : " + int_to_string(p.floor));
+    print("==============================");
+}

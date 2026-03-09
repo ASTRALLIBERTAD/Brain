@@ -10,22 +10,29 @@ if ($LASTEXITCODE -ne 0) {
 # 2. Select Source File
 Write-Host "`n--- [2/3] Select Source File ---" -ForegroundColor Cyan
 Write-Host "1. examples\main.brn"
-Write-Host "2. compiler\main.brn"
-$choice = Read-Host "Choose an option (1 or 2)"
+Write-Host "2. examples\game\main.brn   (Crypts of Brain - dungeon crawler)"
+Write-Host "3. compiler\main.brn        (Building on progress)"
+$choice = Read-Host "Choose an option (1, 2, or 3)"
 
 if ($choice -eq "1") {
-    $SourceDir = "examples"
+    $SourcePath = "examples\main.brn"
+    $InputIR    = "examples\main.ll"
+    $OptIR      = "examples\main_opt.ll"
+    $ExeOut     = "examples\main_final.exe"
 } elseif ($choice -eq "2") {
-    $SourceDir = "compiler"
+    $SourcePath = "examples\game\main.brn"
+    $InputIR    = "examples\game\main.ll"
+    $OptIR      = "examples\game\main_opt.ll"
+    $ExeOut     = "examples\game\main_final.exe"
+} elseif ($choice -eq "3") {
+    $SourcePath = "compiler\main.brn"
+    $InputIR    = "compiler\main.ll"
+    $OptIR      = "compiler\main_opt.ll"
+    $ExeOut     = "compiler\main_final.exe"
 } else {
     Write-Host "Invalid selection. Exiting." -ForegroundColor Red
     exit
 }
-# Path where your compiler saves the IR
-$SourcePath = "$SourceDir\main.brn"
-$InputIR    = "$SourceDir\main.ll"
-$OptIR      = "$SourceDir\main_opt.ll"
-$ExeOut     = "$SourceDir\main_final.exe"
 
 # 3. Run the Compiler
 Write-Host "Compiling $SourcePath..." -ForegroundColor Yellow

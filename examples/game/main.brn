@@ -1,0 +1,223 @@
+import { Player, make_player, player_is_alive, player_heal, player_take_damage, player_gain_xp, player_gain_gold, print_player_stats } from "player/player.brn";
+import { Enemy, make_goblin, make_skeleton, make_orc, make_troll, make_dark_knight, make_dragon_boss, enemy_is_alive } from "enemies/enemies.brn";
+import { Room, make_room, print_room } from "world/room.brn";
+import { get_floor_1_room, get_floor_2_room, get_floor_3_room, floor_room_count } from "world/dungeon.brn";
+import { run_full_combat } from "combat/combat.brn";
+import { save_game } from "save/save.brn";
+
+fn get_room(floor: int, id: int) -> Room {
+    if floor == 1 {
+        return get_floor_1_room(id);
+    } else if floor == 2 {
+        return get_floor_2_room(id);
+    } else {
+        return get_floor_3_room(id);
+    }
+}
+
+fn make_floor_enemy(kind: int) -> Enemy {
+    if kind == 1 { return make_goblin(); }
+    else if kind == 2 { return make_skeleton(); }
+    else if kind == 3 { return make_orc(); }
+    else if kind == 4 { return make_troll(); }
+    else if kind == 5 { return make_dark_knight(); }
+    else { return make_dragon_boss(); }
+}
+
+fn apply_item(player: &mut Player, item_kind: int, item_amount: int) {
+    if item_kind == 1 {
+        print("You drink a Health Potion!");
+        player_heal(player, item_amount);
+    } else if item_kind == 2 {
+        print("You read an Attack Scroll! Attack +" + int_to_string(item_amount) + "!");
+        player.attack = player.attack + item_amount;
+    } else if item_kind == 3 {
+        print("You equip a Defense Amulet! Defense +" + int_to_string(item_amount) + "!");
+        player.defense = player.defense + item_amount;
+    } else if item_kind == 4 {
+        print("You scoop up " + int_to_string(item_amount) + " gold!");
+        player_gain_gold(player, item_amount);
+    }
+}
+
+fn choose_exit(room_north: int, room_south: int, room_east: int, room_west: int) -> int {
+    // Count available exits
+    let mut exit_count = 0;
+    if room_north != -1 { exit_count = exit_count + 1; }
+    if room_south != -1 { exit_count = exit_count + 1; }
+    if room_east  != -1 { exit_count = exit_count + 1; }
+    if room_west  != -1 { exit_count = exit_count + 1; }
+
+    // Only one exit — no choice needed
+    if exit_count == 1 {
+        if room_north != -1 { return room_north; }
+        if room_south != -1 { return room_south; }
+        if room_east  != -1 { return room_east; }
+        return room_west;
+    }
+
+    // Multiple exits — prompt player
+    print("");
+    print("Which way do you go?");
+    if room_north != -1 { print("  [N] North"); }
+    if room_south != -1 { print("  [S] South"); }
+    if room_east  != -1 { print("  [E] East"); }
+    if room_west  != -1 { print("  [W] West"); }
+    print("> ");
+
+    let mut chosen = -1;
+    let mut valid = false;
+    while !valid {
+        let input = read_input();
+        if input == "n" && room_north != -1 {
+            chosen = room_north;
+            valid = true;
+        } else if input == "N" && room_north != -1 {
+            chosen = room_north;
+            valid = true;
+        } else if input == "s" && room_south != -1 {
+            chosen = room_south;
+            valid = true;
+        } else if input == "S" && room_south != -1 {
+            chosen = room_south;
+            valid = true;
+        } else if input == "e" && room_east != -1 {
+            chosen = room_east;
+            valid = true;
+        } else if input == "E" && room_east != -1 {
+            chosen = room_east;
+            valid = true;
+        } else if input == "w" && room_west != -1 {
+            chosen = room_west;
+            valid = true;
+        } else if input == "W" && room_west != -1 {
+            chosen = room_west;
+            valid = true;
+        } else {
+            print("Invalid direction. Try again: ");
+        }
+    }
+    return chosen;
+}
+
+fn enter_room(player: &mut Player, floor: int, room_id: int) -> int {
+    let mut room = get_room(floor, room_id);
+    print_room(&room);
+
+    if room.item_kind != 0 {
+        apply_item(player, room.item_kind, room.item_amount);
+    }
+
+    if room.enemy_kind != 0 {
+        let mut enemy = make_floor_enemy(room.enemy_kind);
+        let won = run_full_combat(player, &mut enemy, 0);
+        if !player_is_alive(player) {
+            return -3;
+        }
+    }
+
+    if room.has_stairs {
+        print("");
+        print("You see stairs leading down. Descend? [Y/N]");
+        print("> ");
+        let stair_input = read_input();
+        if stair_input == "y" || stair_input == "Y" {
+            print("You descend into the depths...");
+            return -2;
+        }
+        // If they say no, still descend — no going back
+        print("There is no other way. You descend...");
+        return -2;
+    }
+
+    return choose_exit(room.north, room.south, room.east, room.west);
+}
+
+fn run_floor(player: &mut Player, floor: int) -> bool {
+    print("");
+    print("########################################");
+    print("  FLOOR " + int_to_string(floor));
+    print("########################################");
+
+    let mut current_room = 0;
+    let mut keep_going = true;
+
+    while keep_going {
+        let next = enter_room(player, floor, current_room);
+
+        if !player_is_alive(player) {
+            return false;
+        }
+
+        if next == -3 {
+            return false;
+        }
+
+        if next == -2 {
+            keep_going = false;
+        } else if next == -1 {
+            keep_going = false;
+        } else {
+            current_room = next;
+        }
+
+        save_game(player);
+    }
+
+    return true;
+}
+
+fn game_over(player: &mut Player) {
+    print("");
+    print("########################################");
+    print("  GAME OVER");
+    print("  " + player.name + " has fallen on floor " + int_to_string(player.floor) + ".");
+    print("########################################");
+}
+
+fn main() {
+    print("========================================");
+    print("       CRYPTS OF BRAIN");
+    print("  A dungeon crawler written in Brain");
+    print("========================================");
+    print("");
+    print("Enter your hero's name:");
+    print("> ");
+    let hero_name = read_input();
+    print("");
+
+    let mut player = make_player(hero_name);
+    print_player_stats(&player);
+
+    let alive = run_floor(&mut player, 1);
+    if !alive {
+        game_over(&mut player);
+        return;
+    }
+
+    player.floor = 2;
+    print_player_stats(&player);
+
+    let alive2 = run_floor(&mut player, 2);
+    if !alive2 {
+        game_over(&mut player);
+        return;
+    }
+
+    player.floor = 3;
+    print_player_stats(&player);
+
+    let alive3 = run_floor(&mut player, 3);
+    if !alive3 {
+        game_over(&mut player);
+        return;
+    }
+
+    print("");
+    print("########################################");
+    print("  YOU WIN!");
+    print("  " + player.name + " has conquered the Crypts of Brain!");
+    print_player_stats(&player);
+    print("########################################");
+}
+

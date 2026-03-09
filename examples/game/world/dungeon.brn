@@ -1,0 +1,78 @@
+import { Room, make_room, print_room } from "room.brn";
+
+// make_room(id, desc, north, south, east, west, enemy_kind, item_kind, item_amount, has_stairs)
+// enemy: 0=none 1=Goblin 2=Skeleton 3=Orc 4=Troll 5=DarkKnight 6=Dragon
+// item:  0=none 1=HealthPotion 2=AttackScroll 3=DefenseAmulet 4=Gold
+
+export fn get_floor_1_room(id: int) -> Room {
+    if id == 0 {
+        // Entrance — health potion
+        return make_room(0, "Dungeon Entrance - Damp stone walls surround you.", -1, -1, 1, -1, 0, 1, 20, false);
+    } else if id == 1 {
+        // Goblin
+        return make_room(1, "Narrow Corridor - The smell of rot fills the air.", -1, -1, 2, 0, 1, 0, 0, false);
+    } else if id == 2 {
+        // Skeleton + gold
+        return make_room(2, "Guard Room - Crude weapons hang on the walls.", -1, -1, 3, 1, 2, 4, 5, false);
+    } else if id == 3 {
+        // Goblin
+        return make_room(3, "Storeroom - Broken crates and barrels everywhere.", -1, -1, 4, 2, 1, 0, 0, false);
+    } else {
+        // Shrine — attack scroll +5, stairs down
+        return make_room(4, "Ancient Shrine - A strange light pulses from below.", -1, -1, -1, 3, 0, 2, 5, true);
+    }
+}
+
+export fn get_floor_2_room(id: int) -> Room {
+    if id == 0 {
+        // Landing — health potion
+        return make_room(0, "Stone Landing - The air is colder here.", -1, -1, 1, -1, 0, 1, 25, false);
+    } else if id == 1 {
+        // Orc
+        return make_room(1, "Bone Hall - Skulls line the walls in neat rows.", -1, -1, 2, 0, 3, 0, 0, false);
+    } else if id == 2 {
+        // Skeleton
+        return make_room(2, "Collapsed Chamber - Rubble blocks most paths.", -1, -1, 3, 1, 2, 0, 0, false);
+    } else if id == 3 {
+        // Troll + defense amulet +3
+        return make_room(3, "Torture Chamber - You try not to look too closely.", -1, -1, 4, 2, 4, 3, 3, false);
+    } else if id == 4 {
+        // Orc + gold
+        return make_room(4, "Fungal Grove - Strange mushrooms glow faintly.", -1, -1, 5, 3, 3, 4, 12, false);
+    } else if id == 5 {
+        // Empty room
+        return make_room(5, "Iron Gate Room - A heavy gate stands ajar.", -1, -1, 6, 4, 0, 0, 0, false);
+    } else {
+        // Antechamber — stairs down
+        return make_room(6, "Throne Room Antechamber - Something powerful is nearby.", -1, -1, -1, 5, 0, 0, 0, true);
+    }
+}
+
+export fn get_floor_3_room(id: int) -> Room {
+    if id == 0 {
+        // Magma cavern — health potion
+        return make_room(0, "Magma Cavern - The walls radiate heat.", -1, -1, 1, -1, 0, 1, 40, false);
+    } else if id == 1 {
+        // Troll
+        return make_room(1, "Lava Bridge - A narrow path over a glowing chasm.", -1, -1, 2, 0, 4, 0, 0, false);
+    } else if id == 2 {
+        // Dark Knight + defense amulet +4
+        return make_room(2, "Armory of the Damned - Ancient weapons melt in the heat.", -1, -1, 3, 1, 5, 3, 4, false);
+    } else if id == 3 {
+        // Troll + gold + attack scroll +5
+        return make_room(3, "Sulfur Pit - Foul gas burns your lungs.", -1, -1, 4, 2, 4, 2, 5, false);
+    } else if id == 4 {
+        // Dark Knight
+        return make_room(4, "Dragon Lair Entrance - Scorch marks cover everything.", -1, -1, 5, 3, 5, 4, 20, false);
+    } else {
+        // THE DRAGON — boss, has_stairs=true to end the floor on win
+        return make_room(5, "THE DRAGON LAIR - A colossal creature raises its head...", -1, -1, -1, 4, 6, 0, 0, true);
+    }
+}
+
+export fn floor_room_count(floor: int) -> int {
+    if floor == 1 { return 5; }
+    else if floor == 2 { return 7; }
+    else { return 6; }
+}
+

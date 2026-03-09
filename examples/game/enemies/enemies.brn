@@ -1,0 +1,54 @@
+export struct Enemy {
+    name: string,
+    hp: int,
+    max_hp: int,
+    attack: int,
+    defense: int,
+    xp_reward: int,
+    gold_reward: int,
+}
+
+export fn make_goblin() -> Enemy {
+    return Enemy { name: "Goblin", hp: 8, max_hp: 8, attack: 4, defense: 0, xp_reward: 3, gold_reward: 2 };
+}
+
+export fn make_skeleton() -> Enemy {
+    return Enemy { name: "Skeleton", hp: 12, max_hp: 12, attack: 6, defense: 1, xp_reward: 5, gold_reward: 3 };
+}
+
+export fn make_orc() -> Enemy {
+    return Enemy { name: "Orc", hp: 18, max_hp: 18, attack: 8, defense: 2, xp_reward: 8, gold_reward: 5 };
+}
+
+export fn make_troll() -> Enemy {
+    return Enemy { name: "Troll", hp: 28, max_hp: 28, attack: 11, defense: 3, xp_reward: 14, gold_reward: 8 };
+}
+
+export fn make_dark_knight() -> Enemy {
+    return Enemy { name: "Dark Knight", hp: 40, max_hp: 40, attack: 15, defense: 6, xp_reward: 22, gold_reward: 15 };
+}
+
+export fn make_dragon_boss() -> Enemy {
+    // Buffed but beatable: player reaches ~ATK 25+ by floor 3 with scrolls
+    // Dragon DEF 8 means player does ~17 per hit, Dragon dies in ~5 rounds
+    // Dragon ATK 20 - player DEF ~11 = 9 damage, player HP ~70, survives ~7 rounds
+    return Enemy { name: "THE DRAGON", hp: 80, max_hp: 80, attack: 20, defense: 8, xp_reward: 100, gold_reward: 50 };
+}
+
+export fn enemy_is_alive(e: &Enemy) -> bool {
+    return e.hp > 0;
+}
+
+export fn enemy_take_damage(e: &mut Enemy, amount: int) {
+    let dmg = amount - e.defense;
+    let mut actual = 0;
+    if dmg < 1 { actual = 1; } else { actual = dmg; }
+    e.hp = e.hp - actual;
+    if e.hp < 0 { e.hp = 0; }
+    print(e.name + " takes " + int_to_string(actual) + " damage! HP: " + int_to_string(e.hp) + "/" + int_to_string(e.max_hp));
+}
+
+export fn print_enemy_stats(e: &Enemy) {
+    print("[" + e.name + "]  HP: " + int_to_string(e.hp) + "/" + int_to_string(e.max_hp) + "  ATK: " + int_to_string(e.attack) + "  DEF: " + int_to_string(e.defense));
+}
+

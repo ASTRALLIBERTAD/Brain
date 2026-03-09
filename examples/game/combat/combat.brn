@@ -1,0 +1,71 @@
+import { Player, player_take_damage, player_gain_xp, player_gain_gold } from "../player/player.brn";
+import { Enemy, enemy_is_alive, enemy_take_damage, print_enemy_stats } from "../enemies/enemies.brn";
+
+// Single round — returns: 1=won, -1=dead, 2=fled, 0=ongoing
+export fn run_combat_round(player: &mut Player, enemy: &mut Enemy, round: int) -> int {
+    print("");
+    print("-- Round " + int_to_string(round) + " --");
+    print("[" + enemy.name + "]  HP: " + int_to_string(enemy.hp) + "/" + int_to_string(enemy.max_hp));
+    print("[" + player.name + "]  HP: " + int_to_string(player.hp) + "/" + int_to_string(player.max_hp) + "  ATK: " + int_to_string(player.attack) + "  DEF: " + int_to_string(player.defense));
+    print("");
+    print("What do you do?");
+    print("  [1] Attack");
+    print("  [2] Flee");
+    print("> ");
+    let input = read_input();
+    if input == "2" {
+        print("You turn and run!");
+        player_take_damage(player, enemy.attack);
+        if player.hp <= 0 {
+            print("*** Cut down while fleeing " + enemy.name + "... ***");
+            return -1;
+        }
+        print("You escaped!");
+        return 2;
+    }
+    enemy_take_damage(enemy, player.attack);
+    if !enemy_is_alive(enemy) {
+        print("*** " + enemy.name + " is defeated! ***");
+        player_gain_xp(player, enemy.xp_reward);
+        player_gain_gold(player, enemy.gold_reward);
+        return 1;
+    }
+    player_take_damage(player, enemy.attack);
+    if player.hp <= 0 {
+        print("*** You have been defeated by " + enemy.name + "... ***");
+        return -1;
+    }
+    return 0;
+}
+
+export fn run_full_combat(player: &mut Player, enemy: &mut Enemy, flee_on_round: int) -> bool {
+    print("");
+    print("=== COMBAT BEGINS: " + player.name + " vs " + enemy.name + " ===");
+    print_enemy_stats(enemy);
+    let mut round = 1;
+    let mut running = true;
+    let mut result = 0;
+    while running {
+        if flee_on_round > 0 && round == flee_on_round {
+            print("You attempt to flee!");
+            player_take_damage(player, enemy.attack);
+            print("You escaped!");
+            return false;
+        }
+        result = run_combat_round(player, enemy, round);
+        if result == 1 {
+            running = false;
+        } else if result == -1 {
+            running = false;
+        } else if result == 2 {
+            running = false;
+        } else {
+            round = round + 1;
+        }
+    }
+    if result == 1 {
+        return true;
+    }
+    return false;
+}
+

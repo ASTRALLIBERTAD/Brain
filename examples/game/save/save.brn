@@ -1,0 +1,26 @@
+import { Player } from "../player/player.brn";
+
+export fn save_game(p: &Player) {
+    let data = "name:" + p.name + "\n"
+             + "hp:" + int_to_string(p.hp) + "\n"
+             + "max_hp:" + int_to_string(p.max_hp) + "\n"
+             + "attack:" + int_to_string(p.attack) + "\n"
+             + "defense:" + int_to_string(p.defense) + "\n"
+             + "level:" + int_to_string(p.level) + "\n"
+             + "xp:" + int_to_string(p.xp) + "\n"
+             + "xp_to_next:" + int_to_string(p.xp_to_next) + "\n"
+             + "gold:" + int_to_string(p.gold) + "\n"
+             + "floor:" + int_to_string(p.floor) + "\n";
+    write_file("save.txt", data);
+    print("Game saved.");
+}
+
+export fn print_save_exists() {
+    let data = read_file("save.txt");
+    if data.len() > 0 {
+        print("Save file found:");
+        print(data);
+    } else {
+        print("No save file found.");
+    }
+}

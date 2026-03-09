@@ -93,6 +93,8 @@ fn main() {
 ```
 examples/
 ├── main.brn
+├── game/
+│   └── main.brn          ← Crypts of Brain (dungeon crawler)
 ├── types/types.brn
 ├── operators/operators.brn
 ├── control_flow/control_flow.brn
@@ -106,6 +108,20 @@ examples/
 ├── files/files.brn
 └── mutex/mutex.brn
 ```
+
+### Crypts of Brain
+
+A text-based dungeon crawler written entirely in Brain — a real game that demonstrates structs, functions, ownership, file I/O, and string handling working together in a single file.
+
+```
+examples\game\main.brn
+```
+
+- 3 floors, 18 rooms total
+- Turn-based combat with 6 enemy types (Goblin → Dragon boss)
+- RPG progression: XP, levelling up, attack/defense/HP upgrades
+- Items: Health Potions, Attack Scrolls, Defense Amulets, Gold
+- Autosaves to `brain_save.txt` after every room
 
 ---
 
@@ -122,7 +138,15 @@ examples/
 .\build.ps1
 ```
 
-`build.ps1` handles everything: compiles the Brain compiler with `cargo`, runs it on your chosen source file to produce LLVM IR, then runs the LLVM O3 optimization pipeline and links a native `.exe`.
+`build.ps1` handles everything: compiles the Brain compiler with `cargo`, lets you pick a source file, runs it through the Brain compiler to produce LLVM IR, then runs the LLVM O3 optimization pipeline and links a native `.exe`.
+
+**Options presented by `build.ps1`:**
+
+| # | Source | Description |
+|---|--------|-------------|
+| 1 | `examples\main.brn` | Feature showcase |
+| 2 | `examples\game\main.brn` | Crypts of Brain (dungeon crawler) |
+| 3 | `compiler\main.brn` | Self-hosting compiler (building on progress) |
 
 ### Manual
 
@@ -130,6 +154,14 @@ examples/
 cargo build --release
 target\release\brain.exe examples\main.brn
 clang -O3 examples\main.ll -o main.exe -lkernel32 -luser32
+```
+
+To build the game specifically:
+
+```powershell
+cargo build --release
+target\release\brain.exe examples\game\main.brn
+clang -O3 examples\game\main.ll -o game.exe -lkernel32 -luser32
 ```
 
 ---
