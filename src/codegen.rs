@@ -8,6 +8,7 @@ pub struct CodeGenerator {
     temp_counter: usize,
     label_counter: usize,
     string_literals: Vec<(String, String)>,
+    string_literal_map: HashMap<String, String>, // dedup: value -> id
     current_function_vars: HashMap<String, VarMetadata>,
     loop_stack: Vec<LoopLabels>,
     enum_types: HashMap<String, Vec<String>>,
@@ -94,6 +95,7 @@ impl EscapeAnalysis {
                         | "println_char"
                         | "write_file"
                         | "read_file"
+                        | "read_input"
                         | "vec_len"
                         | "vec_get"
                         | "vec_push"
@@ -221,12 +223,13 @@ impl EscapeAnalysis {
 impl CodeGenerator {
     pub fn new() -> Self {
         CodeGenerator {
-            output: String::new(),
+            output: String::with_capacity(64 * 1024), // pre-alloc to avoid reallocations
             struct_decls: Vec::new(),
             string_counter: 0,
             temp_counter: 0,
             label_counter: 0,
             string_literals: Vec::new(),
+            string_literal_map: HashMap::new(),
             current_function_vars: HashMap::new(),
             loop_stack: Vec::new(),
             enum_types: HashMap::new(),
@@ -244,32 +247,42 @@ impl CodeGenerator {
     }
 
     pub fn generate(&mut self, ast: &AstNode) -> String {
+        // Single pre-pass: collect structs, enums, fn signatures, purity — was 4 separate loops
         if let AstNode::Program(nodes) = ast {
             for node in nodes {
-                if let AstNode::StructDef { name, fields, .. } = node {
-                    let field_info: Vec<(String, String)> = fields
-                        .iter()
-                        .map(|f| (f.name.clone(), f.field_type.clone()))
-                        .collect();
-                    self.struct_types.insert(name.clone(), field_info);
-                }
-                if let AstNode::EnumDef { name, variants, .. } = node {
-                    let variant_names: Vec<String> =
-                        variants.iter().map(|v| v.name.clone()).collect();
-                    self.enum_types.insert(name.clone(), variant_names);
-                }
-            }
-        }
-
-        if let AstNode::Program(nodes) = ast {
-            for node in nodes {
-                if let AstNode::FunctionDef {
-                    name, params, body, ..
-                } = node
-                {
-                    if Self::infer_purity(params, body) {
-                        self.pure_functions.insert(name.clone());
+                match node {
+                    AstNode::StructDef { name, fields, .. } => {
+                        let field_info: Vec<(String, String)> = fields
+                            .iter()
+                            .map(|f| (f.name.clone(), f.field_type.clone()))
+                            .collect();
+                        self.struct_types.insert(name.clone(), field_info);
                     }
+                    AstNode::EnumDef { name, variants, .. } => {
+                        let variant_names: Vec<String> =
+                            variants.iter().map(|v| v.name.clone()).collect();
+                        self.enum_types.insert(name.clone(), variant_names);
+                    }
+                    AstNode::FunctionDef {
+                        name,
+                        params,
+                        body,
+                        return_type,
+                        ..
+                    } => {
+                        let ret_llvm = if name == "main" {
+                            "i32".to_string()
+                        } else if let Some(rt) = return_type {
+                            self.type_to_llvm(rt)
+                        } else {
+                            "void".to_string()
+                        };
+                        self.function_signatures.insert(name.clone(), ret_llvm);
+                        if Self::infer_purity(params, body) {
+                            self.pure_functions.insert(name.clone());
+                        }
+                    }
+                    _ => {}
                 }
             }
         }
@@ -982,6 +995,48 @@ impl CodeGenerator {
         self.emit("}");
         self.emit("");
 
+        // read_input(): reads one line from stdin, strips \r\n, returns i8*
+        self.emit("define i8* @read_input_impl() {");
+        self.emit("  %ri_buf = call i8* @malloc(i64 256)");
+        self.emit("  %ri_stdin = call i8* @GetStdHandle(i32 -10)");
+        self.emit("  %ri_read = alloca i32");
+        self.emit("  store i32 0, i32* %ri_read");
+        self.emit(
+            "  call i32 @ReadFile(i8* %ri_stdin, i8* %ri_buf, i32 254, i32* %ri_read, i8* null)",
+        );
+        self.emit("  %ri_n32 = load i32, i32* %ri_read");
+        self.emit("  %ri_n = sext i32 %ri_n32 to i64");
+        // null-terminate at n
+        self.emit("  %ri_endp = getelementptr i8, i8* %ri_buf, i64 %ri_n");
+        self.emit("  store i8 0, i8* %ri_endp");
+        // strip trailing \n (char 10)
+        self.emit("  %ri_has = icmp sgt i64 %ri_n, 0");
+        self.emit("  br i1 %ri_has, label %ri_chk_n, label %ri_done");
+        self.emit("ri_chk_n:");
+        self.emit("  %ri_n1 = sub i64 %ri_n, 1");
+        self.emit("  %ri_p1 = getelementptr i8, i8* %ri_buf, i64 %ri_n1");
+        self.emit("  %ri_c1 = load i8, i8* %ri_p1");
+        self.emit("  %ri_is_n = icmp eq i8 %ri_c1, 10");
+        self.emit("  br i1 %ri_is_n, label %ri_strip_n, label %ri_chk_r");
+        self.emit("ri_strip_n:");
+        self.emit("  store i8 0, i8* %ri_p1");
+        // now check for \r before it
+        self.emit("  %ri_has2 = icmp sgt i64 %ri_n1, 0");
+        self.emit("  br i1 %ri_has2, label %ri_chk_r, label %ri_done");
+        self.emit("ri_chk_r:");
+        self.emit("  %ri_n2 = sub i64 %ri_n1, 1");
+        self.emit("  %ri_p2 = getelementptr i8, i8* %ri_buf, i64 %ri_n2");
+        self.emit("  %ri_c2 = load i8, i8* %ri_p2");
+        self.emit("  %ri_is_r = icmp eq i8 %ri_c2, 13");
+        self.emit("  br i1 %ri_is_r, label %ri_strip_r, label %ri_done");
+        self.emit("ri_strip_r:");
+        self.emit("  store i8 0, i8* %ri_p2");
+        self.emit("  br label %ri_done");
+        self.emit("ri_done:");
+        self.emit("  ret i8* %ri_buf");
+        self.emit("}");
+        self.emit("");
+
         self.emit("define i8* @vec_new_impl() {");
         self.emit("  %vn_hdr = call i8* @malloc(i64 24)");
         self.emit("  %vn_lp = bitcast i8* %vn_hdr to i64*");
@@ -1064,17 +1119,23 @@ impl CodeGenerator {
     }
 
     fn emit_footer(&mut self) {
+        // Build the header block first, then prepend to output in one allocation
+        // instead of shifting the entire buffer on every string literal/struct decl.
+        let mut header = String::with_capacity(4096);
+        for decl in self.struct_decls.iter().rev() {
+            header.push_str(decl);
+            header.push('\n');
+        }
         for (id, value) in &self.string_literals {
             let len = value.len() + 1;
             let escaped = self.escape_string(value);
-            self.output = format!(
-                "@{} = private unnamed_addr constant [{} x i8] c\"{}\\00\", align 1\n{}",
-                id, len, escaped, self.output
-            );
+            header.push_str(&format!(
+                "@{} = private unnamed_addr constant [{} x i8] c\"{}\\00\", align 1\n",
+                id, len, escaped
+            ));
         }
-        for decl in self.struct_decls.clone().iter().rev() {
-            self.output = format!("{}\n{}", decl, self.output);
-        }
+        header.push_str(&self.output);
+        self.output = header;
     }
 
     fn gen_node(&mut self, node: &AstNode) -> String {
@@ -1502,7 +1563,7 @@ impl CodeGenerator {
 
                 let is_string_literal = matches!(value.as_ref(), AstNode::StringLit(_));
                 let is_struct = self.struct_types.contains_key(&var_type);
-                let stack_promote = self.non_escaping.contains(name);
+                let stack_promote = self.non_escaping.contains(name) && !is_struct;
 
                 let is_mutex =
                     var_type.starts_with("Mutex<") || var_type.starts_with("MutexGuard<");
@@ -1648,11 +1709,17 @@ impl CodeGenerator {
                         if let Some(field_idx) = struct_fields.iter().position(|(n, _)| n == field)
                         {
                             let struct_name = meta.var_type.clone();
-                            let obj_ptr = self.new_temp();
-                            self.emit(&format!(
-                                "  {} = load %{}*, %{}** {}",
-                                obj_ptr, struct_name, struct_name, meta.llvm_name
-                            ));
+                            // %arg_* params are already %StructName* — skip the extra load.
+                            let obj_ptr = if meta.llvm_name.starts_with("%arg_") {
+                                meta.llvm_name.clone()
+                            } else {
+                                let loaded = self.new_temp();
+                                self.emit(&format!(
+                                    "  {} = load %{}*, %{}** {}",
+                                    loaded, struct_name, struct_name, meta.llvm_name
+                                ));
+                                loaded
+                            };
                             let field_type = struct_fields[field_idx].1.clone();
                             let llvm_ft = self.type_to_llvm(&field_type);
                             let gep = self.new_temp();
@@ -1854,7 +1921,8 @@ impl CodeGenerator {
                 } else if self.current_function_return_type == "void" {
                     self.emit("  ret void");
                 } else {
-                    self.emit("  ret i64 0");
+                    let ret_type = self.current_function_return_type.clone();
+                    self.emit(&format!("  ret {} 0", ret_type));
                 }
                 self.block_terminated = true;
                 "0".to_string()
@@ -1862,7 +1930,9 @@ impl CodeGenerator {
 
             AstNode::Block(statements) => {
                 let mut last_reg = String::new();
-                let vars_before = self.current_function_vars.clone();
+                // Snapshot only the key sets — cheaper than cloning all VarMetadata values
+                let keys_before: std::collections::HashSet<String> =
+                    self.current_function_vars.keys().cloned().collect();
                 let guards_before = self.guard_vars.clone();
 
                 for stmt in statements {
@@ -1875,7 +1945,7 @@ impl CodeGenerator {
                     .iter()
                     .filter(|(name, meta)| {
                         meta.var_type.starts_with("MutexGuard<")
-                            && !vars_before.contains_key(name.as_str())
+                            && !keys_before.contains(name.as_str())
                             && !self.is_unsafe_fn
                     })
                     .map(|(_, meta)| meta.llvm_name.clone())
@@ -1887,7 +1957,7 @@ impl CodeGenerator {
                     .filter(|(name, meta)| {
                         meta.is_heap
                             && !meta.is_string_literal
-                            && !vars_before.contains_key(name.as_str())
+                            && !keys_before.contains(name.as_str())
                     })
                     .map(|(_, meta)| (meta.llvm_name.clone(), meta.var_type.clone()))
                     .collect();
@@ -1938,7 +2008,9 @@ impl CodeGenerator {
                     }
                 }
 
-                // Restore guard tracking to pre-block state
+                // Remove vars introduced in this block; restore guard tracking
+                self.current_function_vars
+                    .retain(|k, _| keys_before.contains(k));
                 self.guard_vars = guards_before;
 
                 last_reg
@@ -2270,6 +2342,11 @@ impl CodeGenerator {
                     ));
                     result
                 }
+                "read_input" => {
+                    let result = self.new_temp();
+                    self.emit(&format!("  {} = call i8* @read_input_impl()", result));
+                    result
+                }
                 "write_file" if args.len() >= 2 => {
                     let filename_reg = self.gen_node(&args[0]);
                     let content_reg = self.gen_node(&args[1]);
@@ -2365,6 +2442,24 @@ impl CodeGenerator {
                                             ));
                                             arg_regs.push(loaded);
                                             arg_types.push("i8*".to_string());
+                                        } else if self.struct_types.contains_key(&meta.var_type) {
+                                            // Heap struct locals are %StructName** allocas.
+                                            // Load once to get the actual %StructName*.
+                                            let struct_name = meta.var_type.clone();
+                                            if meta.llvm_name.starts_with("%arg_") {
+                                                arg_regs.push(meta.llvm_name.clone());
+                                            } else {
+                                                let loaded = self.new_temp();
+                                                self.emit(&format!(
+                                                    "  {} = load %{}*, %{}** {}",
+                                                    loaded,
+                                                    struct_name,
+                                                    struct_name,
+                                                    meta.llvm_name
+                                                ));
+                                                arg_regs.push(loaded);
+                                            }
+                                            arg_types.push(format!("%{}*", struct_name));
                                         } else {
                                             arg_regs.push(meta.llvm_name.clone());
                                             arg_types.push(format!(
@@ -2404,7 +2499,7 @@ impl CodeGenerator {
                                         "  {} = call i8* @strcpy(i8* {}, i8* {})",
                                         copied, copy, reg
                                     ));
-                                    arg_regs.push(copy);
+                                    arg_regs.push(copied);
                                 } else {
                                     arg_regs.push(reg);
                                 }
@@ -2984,7 +3079,7 @@ impl CodeGenerator {
                 }
             }
             AstNode::Call { name, .. } => match name.as_str() {
-                "read_file" | "int_to_string" => "string".to_string(),
+                "read_file" | "int_to_string" | "read_input" => "string".to_string(),
                 "write_file" => "int".to_string(),
                 "vec_new" => "Vec".to_string(),
                 "vec_get" | "vec_len" => "int".to_string(),
@@ -3009,6 +3104,18 @@ impl CodeGenerator {
                     }
                     _ => obj_type,
                 }
+            }
+            AstNode::MemberAccess { object, field } => {
+                let obj_type = self.infer_type(object);
+                self.struct_types
+                    .get(&obj_type)
+                    .and_then(|fields| {
+                        fields
+                            .iter()
+                            .find(|(name, _)| name == field)
+                            .map(|(_, ty)| ty.clone())
+                    })
+                    .unwrap_or_else(|| "int".to_string())
             }
             _ => "int".to_string(),
         }
@@ -3062,8 +3169,14 @@ impl CodeGenerator {
     }
 
     fn new_string_literal(&mut self, value: &str) -> String {
+        // Reuse existing global if the same string was already emitted
+        if let Some(id) = self.string_literal_map.get(value) {
+            return id.clone();
+        }
         let id = format!(".str.{}", self.string_counter);
         self.string_counter += 1;
+        self.string_literal_map
+            .insert(value.to_string(), id.clone());
         self.string_literals.push((id.clone(), value.to_string()));
         id
     }

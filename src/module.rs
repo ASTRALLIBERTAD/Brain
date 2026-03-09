@@ -1,3 +1,5 @@
+// I think this implementation is not good, I don't know hahaha
+
 use crate::lexer::Lexer;
 use crate::parser::{AstNode, Parser};
 use std::collections::{HashMap, HashSet};
@@ -48,8 +50,12 @@ impl ModuleCache {
             }
         }
 
-        let requested: std::collections::HashSet<&str> =
-            requested_names.iter().map(|s| s.as_str()).collect();
+        // Expand the requested set to include every internal helper that is
+        // transitively called by the requested functions.  Without this, a
+        // function like `enemy_take_damage` that calls a private helper
+        // `_clamp` would produce an LLVM call to `@brn__clamp` with no
+        // definition, causing a linker error.
+        let needed = Self::transitive_needed(requested_names, &exports.all_definitions);
 
         Ok(exports
             .all_definitions
@@ -58,7 +64,7 @@ impl ModuleCache {
                 AstNode::FunctionDef { name, .. }
                 | AstNode::LetBinding { name, .. }
                 | AstNode::StructDef { name, .. }
-                | AstNode::EnumDef { name, .. } => requested.contains(name.as_str()),
+                | AstNode::EnumDef { name, .. } => needed.contains(name.as_str()),
                 _ => true,
             })
             .cloned()
@@ -218,6 +224,120 @@ impl ModuleCache {
         Ok(())
     }
 
+    /// Starting from `roots`, walk call-graph edges within `definitions` to
+    /// find every function (exported or not) that must be included so that
+    /// all call sites have a definition available.
+    fn transitive_needed<'a>(roots: &'a [String], definitions: &'a [AstNode]) -> HashSet<&'a str> {
+        // Build a quick name → body map for every FunctionDef in the module.
+        let body_map: HashMap<&str, &AstNode> = definitions
+            .iter()
+            .filter_map(|n| {
+                if let AstNode::FunctionDef { name, body, .. } = n {
+                    Some((name.as_str(), body.as_ref()))
+                } else {
+                    None
+                }
+            })
+            .collect();
+
+        let mut needed: HashSet<&str> = HashSet::new();
+        let mut queue: Vec<&str> = roots.iter().map(|s| s.as_str()).collect();
+
+        while let Some(current) = queue.pop() {
+            if !needed.insert(current) {
+                continue; // already visited
+            }
+            if let Some(body) = body_map.get(current) {
+                Self::collect_calls_from_body(body, &mut queue);
+            }
+        }
+
+        needed
+    }
+
+    /// Recursively collect all direct Call targets from an AST node.
+    fn collect_calls_from_body<'a>(node: &'a AstNode, out: &mut Vec<&'a str>) {
+        match node {
+            AstNode::Call { name, args } => {
+                out.push(name.as_str());
+                for a in args {
+                    Self::collect_calls_from_body(a, out);
+                }
+            }
+            AstNode::Block(stmts) | AstNode::Program(stmts) => {
+                for s in stmts {
+                    Self::collect_calls_from_body(s, out);
+                }
+            }
+            AstNode::FunctionDef { body, .. } => Self::collect_calls_from_body(body, out),
+            AstNode::LetBinding { value, .. } | AstNode::Assignment { value, .. } => {
+                Self::collect_calls_from_body(value, out)
+            }
+            AstNode::If {
+                condition,
+                then_block,
+                else_block,
+            } => {
+                Self::collect_calls_from_body(condition, out);
+                Self::collect_calls_from_body(then_block, out);
+                if let Some(e) = else_block {
+                    Self::collect_calls_from_body(e, out);
+                }
+            }
+            AstNode::While { condition, body } => {
+                Self::collect_calls_from_body(condition, out);
+                Self::collect_calls_from_body(body, out);
+            }
+            AstNode::For { iterator, body, .. } => {
+                Self::collect_calls_from_body(iterator, out);
+                Self::collect_calls_from_body(body, out);
+            }
+            AstNode::Return(Some(v)) => Self::collect_calls_from_body(v, out),
+            AstNode::BinaryOp { left, right, .. } => {
+                Self::collect_calls_from_body(left, out);
+                Self::collect_calls_from_body(right, out);
+            }
+            AstNode::UnaryOp { operand, .. } => Self::collect_calls_from_body(operand, out),
+            AstNode::ExpressionStatement(e) => Self::collect_calls_from_body(e, out),
+            AstNode::Match { value, arms } => {
+                Self::collect_calls_from_body(value, out);
+                for arm in arms {
+                    Self::collect_calls_from_body(&arm.body, out);
+                }
+            }
+            AstNode::ArrayLit(elems) => {
+                for e in elems {
+                    Self::collect_calls_from_body(e, out);
+                }
+            }
+            AstNode::StructInit { fields, .. } => {
+                for (_, v) in fields {
+                    Self::collect_calls_from_body(v, out);
+                }
+            }
+            AstNode::Index { array, index } => {
+                Self::collect_calls_from_body(array, out);
+                Self::collect_calls_from_body(index, out);
+            }
+            AstNode::Reference(e) | AstNode::EnumValue { value: Some(e), .. } => {
+                Self::collect_calls_from_body(e, out)
+            }
+            AstNode::MethodCall { object, args, .. } => {
+                Self::collect_calls_from_body(object, out);
+                for a in args {
+                    Self::collect_calls_from_body(a, out);
+                }
+            }
+            AstNode::MemberAccess { object, .. } => Self::collect_calls_from_body(object, out),
+            AstNode::ArrayAssignment { index, value, .. } => {
+                Self::collect_calls_from_body(index, out);
+                Self::collect_calls_from_body(value, out);
+            }
+            AstNode::MemberAssignment { value, .. } => Self::collect_calls_from_body(value, out),
+            _ => {}
+        }
+    }
+
     fn format_names(names: &HashSet<String>) -> String {
         if names.is_empty() {
             return "(none — no symbols are exported from this module)".to_string();
@@ -239,11 +359,25 @@ pub fn resolve_imports(
 ) -> Result<AstNode, String> {
     if let AstNode::Program(nodes) = ast {
         let mut resolved: Vec<AstNode> = Vec::new();
+        // Global dedup across all import statements in this file.
+        let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
         for node in nodes {
             match node {
                 AstNode::Import { names, path } => {
                     let defs = cache.import(file, &path, &names)?;
-                    resolved.extend(defs);
+                    for def in defs {
+                        match &def {
+                            AstNode::FunctionDef { name, .. }
+                            | AstNode::LetBinding { name, .. }
+                            | AstNode::StructDef { name, .. }
+                            | AstNode::EnumDef { name, .. } => {
+                                if seen.insert(name.clone()) {
+                                    resolved.push(def);
+                                }
+                            }
+                            other => resolved.push(other.clone()),
+                        }
+                    }
                 }
                 other => resolved.push(other),
             }

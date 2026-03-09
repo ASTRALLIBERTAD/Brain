@@ -1198,6 +1198,9 @@ impl<'a> Parser<'a> {
         loop {
             if self.check(&TokenType::Ampersand) {
                 self.advance();
+                if self.check(&TokenType::Mut) {
+                    self.advance();
+                }
                 let expr = self.parse_expression()?;
                 args.push(AstNode::Reference(Box::new(expr)));
             } else {
