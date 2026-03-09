@@ -76,7 +76,7 @@ export fn make_point(x: int, y: int) -> Point {
 ```
 
 ```brain
-import { Point, make_point } from "structs/structs.brn"
+import { Point, make_point } from "structs/structs.brn";
 
 fn main() {
     let p = make_point(3, 4);
