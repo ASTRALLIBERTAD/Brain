@@ -84,7 +84,7 @@ pub enum Pattern {
     },
 }
 
-// ── Nodes ────────────────────────────────────────────────────────────────────
+// Nodes
 
 #[derive(Debug, Clone)]
 pub enum AstNode {

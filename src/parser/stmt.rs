@@ -3,7 +3,7 @@ use crate::ast::{AstNode, BinOp, Location, MatchArm};
 use crate::lexer::{Keyword, TokenKind};
 
 impl<'a> Parser<'a> {
-    // ── Statement dispatcher ─────────────────────────────────────────────────
+    // Statement dispatcher
 
     pub(crate) fn parse_statement(&mut self) -> Result<AstNode, String> {
         match self.peek().kind.clone() {
@@ -119,7 +119,7 @@ impl<'a> Parser<'a> {
         })
     }
 
-    // ── Block ────────────────────────────────────────────────────────────────
+    // Block
 
     /// Blocks collect inner errors locally and synchronize, so a bad
     /// statement inside a function doesn't stop the rest of the block
@@ -142,7 +142,7 @@ impl<'a> Parser<'a> {
         Ok(AstNode::Block(stmts))
     }
 
-    // ── Control flow ─────────────────────────────────────────────────────────
+    // Control flow
 
     pub(crate) fn parse_if(&mut self) -> Result<AstNode, String> {
         self.expect_keyword(&Keyword::If, "Expected 'if'")?;
