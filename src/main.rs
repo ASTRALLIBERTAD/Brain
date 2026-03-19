@@ -2,7 +2,7 @@ use std::env;
 use std::fs;
 use std::process;
 
-mod ast; // ← extracted from parser; codegen/semantic/module import from here
+mod ast;
 mod codegen;
 mod lexer;
 mod module;
@@ -125,7 +125,8 @@ fn compile_file(input_file: &str, output_file: &str) {
             .arg("-lkernel32")
             .arg("-Wl,/subsystem:console");
     } else if cfg!(target_os = "linux") {
-        cmd.arg("-static").arg("-nostdlib");
+        // Brain's IR declares syscall(i64, ...) which maps to the libc
+        // syscall() wrapper — no extra flags needed, clang links libc by default.
     } else if cfg!(target_os = "macos") {
         cmd.arg("-nostdlib").arg("-lSystem");
     }
@@ -142,11 +143,12 @@ fn compile_file(input_file: &str, output_file: &str) {
         }
         Err(e) => {
             eprintln!("Error: clang not found. {}", e);
-            println!("LLVM IR saved to: {}", ll_file);
-            println!(
+            eprintln!("LLVM IR saved to: {}", ll_file);
+            eprintln!(
                 "You can compile manually with: clang {} -o {}",
                 ll_file, output_exe
             );
+            process::exit(1);
         }
     }
 }
