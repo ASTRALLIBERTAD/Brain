@@ -75,15 +75,11 @@ jobs:
       - name: Install clang (Linux)
         if: runner.os == 'Linux'
         run: |
-          sudo apt-get update -qq
-          sudo apt-get install -y clang llvm
+          wget -qO- https://apt.llvm.org/llvm.sh | sudo bash -s 18
+          sudo apt-get install -y clang-18
+          sudo update-alternatives --install /usr/bin/clang clang /usr/bin/clang-18 100
 
-      - name: Install clang (Windows)
-        if: runner.os == 'Windows'
-        shell: pwsh
-        run: |
-          choco install llvm --yes --no-progress
-          echo "C:\Program Files\LLVM\bin" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+      # Windows runners ship with LLVM 18 pre-installed — no install step needed.
 
       # ── Build Brain compiler ────────────────────────────────────────────────
       - name: Build brain compiler
@@ -117,10 +113,17 @@ jobs:
         run: |
           set +e
           if [ "$RUNNER_OS" = "Windows" ]; then
-            output=$(./examples/main.exe 2>&1)
+            EXE="./examples/main.exe"
           else
-            output=$(./examples/main 2>&1)
+            EXE="./examples/main"
           fi
+
+          if [ ! -f "$EXE" ]; then
+            echo "::error file=examples/main.brn::Binary not found at $EXE — compile step may have failed"
+            exit 1
+          fi
+
+          output=$($EXE 2>&1)
           exit_code=$?
           echo "$output"
 
@@ -160,10 +163,17 @@ jobs:
         run: |
           set +e
           if [ "$RUNNER_OS" = "Windows" ]; then
-            output=$(./examples/game/main.exe 2>&1)
+            EXE="./examples/game/main.exe"
           else
-            output=$(./examples/game/main 2>&1)
+            EXE="./examples/game/main"
           fi
+
+          if [ ! -f "$EXE" ]; then
+            echo "::error file=examples/game/main.brn::Binary not found at $EXE — compile step may have failed"
+            exit 1
+          fi
+
+          output=$($EXE 2>&1)
           exit_code=$?
           echo "$output"
 
