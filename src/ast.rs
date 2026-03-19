@@ -60,6 +60,7 @@ pub struct Field {
 #[derive(Debug, Clone)]
 pub struct EnumVariant {
     pub name: String,
+    #[allow(dead_code)]
     pub value_type: Option<String>,
 }
 
@@ -69,6 +70,7 @@ pub struct MatchArm {
     pub body: AstNode,
 }
 
+#[allow(clippy::enum_variant_names)]
 #[derive(Debug, Clone)]
 pub enum Pattern {
     Wildcard,
@@ -142,6 +144,7 @@ pub enum AstNode {
 
     ArrayLit(Vec<AstNode>),
 
+    #[allow(dead_code)]
     ArrayType {
         element_type: String,
         size: usize,

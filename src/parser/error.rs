@@ -5,12 +5,6 @@ use std::fmt;
 /// can keep going after a missing semicolon and report everything at once.
 pub struct ParseErrors(pub Vec<String>);
 
-impl ParseErrors {
-    pub fn single(msg: String) -> Self {
-        ParseErrors(vec![msg])
-    }
-}
-
 impl fmt::Display for ParseErrors {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         for (i, e) in self.0.iter().enumerate() {

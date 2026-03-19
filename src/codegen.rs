@@ -1199,61 +1199,59 @@ impl CodeGenerator {
                             .get(obj_name.as_str())
                             .map(|m| m.var_type.starts_with("MutexGuard<"))
                             .unwrap_or(false))
-                        && field == "value"
-                        && !self.is_unsafe_fn
+                    && field == "value"
+                    && !self.is_unsafe_fn
+                {
+                    let guard_ptr = if let Some(meta) =
+                        self.current_function_vars.get(obj_name.as_str()).cloned()
                     {
-                        let guard_ptr = if let Some(meta) =
-                            self.current_function_vars.get(obj_name.as_str()).cloned()
-                        {
-                            if meta.llvm_name.starts_with("%arg_") {
-                                meta.llvm_name.clone()
-                            } else {
-                                let loaded = self.new_temp();
-                                self.emit(&format!(
-                                    "  {} = load i8*, i8** {}",
-                                    loaded, meta.llvm_name
-                                ));
-                                loaded
-                            }
+                        if meta.llvm_name.starts_with("%arg_") {
+                            meta.llvm_name.clone()
                         } else {
-                            obj_name.to_string()
-                        };
-                        let val_gep = self.new_temp();
-                        self.emit(&format!(
-                            "  {} = getelementptr i8, i8* {}, i64 40",
-                            val_gep, guard_ptr
-                        ));
-                        let val_ptr = self.new_temp();
-                        self.emit(&format!("  {} = bitcast i8* {} to i64*", val_ptr, val_gep));
-                        let result = self.new_temp();
-                        // volatile load — prevents register caching across lock boundary
-                        self.emit(&format!(
-                            "  {} = load volatile i64, i64* {}",
-                            result, val_ptr
-                        ));
-                        return result;
-                    }
+                            let loaded = self.new_temp();
+                            self.emit(&format!("  {} = load i8*, i8** {}", loaded, meta.llvm_name));
+                            loaded
+                        }
+                    } else {
+                        obj_name.to_string()
+                    };
+                    let val_gep = self.new_temp();
+                    self.emit(&format!(
+                        "  {} = getelementptr i8, i8* {}, i64 40",
+                        val_gep, guard_ptr
+                    ));
+                    let val_ptr = self.new_temp();
+                    self.emit(&format!("  {} = bitcast i8* {} to i64*", val_ptr, val_gep));
+                    let result = self.new_temp();
+                    // volatile load — prevents register caching across lock boundary
+                    self.emit(&format!(
+                        "  {} = load volatile i64, i64* {}",
+                        result, val_ptr
+                    ));
+                    return result;
+                }
 
                 let obj_reg = self.gen_node(object);
                 let struct_name = self.infer_struct_name(object);
 
                 if let Some(struct_fields) = self.struct_types.get(&struct_name).cloned()
-                    && let Some(field_idx) = struct_fields.iter().position(|(n, _)| n == field) {
-                        let field_type = struct_fields[field_idx].1.clone();
-                        let llvm_field_type = self.type_to_llvm(&field_type);
+                    && let Some(field_idx) = struct_fields.iter().position(|(n, _)| n == field)
+                {
+                    let field_type = struct_fields[field_idx].1.clone();
+                    let llvm_field_type = self.type_to_llvm(&field_type);
 
-                        let gep = self.new_temp();
-                        self.emit(&format!(
-                            "  {} = getelementptr %{}, %{}* {}, i32 0, i32 {}",
-                            gep, struct_name, struct_name, obj_reg, field_idx
-                        ));
-                        let result = self.new_temp();
-                        self.emit(&format!(
-                            "  {} = load {}, {}* {}",
-                            result, llvm_field_type, llvm_field_type, gep
-                        ));
-                        return result;
-                    }
+                    let gep = self.new_temp();
+                    self.emit(&format!(
+                        "  {} = getelementptr %{}, %{}* {}, i32 0, i32 {}",
+                        gep, struct_name, struct_name, obj_reg, field_idx
+                    ));
+                    let result = self.new_temp();
+                    self.emit(&format!(
+                        "  {} = load {}, {}* {}",
+                        result, llvm_field_type, llvm_field_type, gep
+                    ));
+                    return result;
+                }
                 "0".to_string()
             }
 
@@ -1550,9 +1548,11 @@ impl CodeGenerator {
 
                 // If the value is a .lock() call, register this binding as a guard
                 if let AstNode::MethodCall { method, .. } = value.as_ref()
-                    && method == "lock" && !self.is_unsafe_fn {
-                        self.guard_vars.insert(name.clone());
-                    }
+                    && method == "lock"
+                    && !self.is_unsafe_fn
+                {
+                    self.guard_vars.insert(name.clone());
+                }
 
                 let is_string_literal = matches!(value.as_ref(), AstNode::StringLit(_));
                 let is_struct = self.struct_types.contains_key(&var_type);
@@ -1698,32 +1698,32 @@ impl CodeGenerator {
                     .map(|m| m.var_type.clone())
                     .and_then(|t| self.struct_types.get(&t).cloned())
                     && let Some(meta) = self.current_function_vars.get(object.as_str()).cloned()
-                        && let Some(field_idx) = struct_fields.iter().position(|(n, _)| n == field)
-                        {
-                            let struct_name = meta.var_type.clone();
-                            // %arg_* params are already %StructName* — skip the extra load.
-                            let obj_ptr = if meta.llvm_name.starts_with("%arg_") {
-                                meta.llvm_name.clone()
-                            } else {
-                                let loaded = self.new_temp();
-                                self.emit(&format!(
-                                    "  {} = load %{}*, %{}** {}",
-                                    loaded, struct_name, struct_name, meta.llvm_name
-                                ));
-                                loaded
-                            };
-                            let field_type = struct_fields[field_idx].1.clone();
-                            let llvm_ft = self.type_to_llvm(&field_type);
-                            let gep = self.new_temp();
-                            self.emit(&format!(
-                                "  {} = getelementptr %{}, %{}* {}, i32 0, i32 {}",
-                                gep, struct_name, struct_name, obj_ptr, field_idx
-                            ));
-                            self.emit(&format!(
-                                "  store {} {}, {}* {}",
-                                llvm_ft, value_reg, llvm_ft, gep
-                            ));
-                        }
+                    && let Some(field_idx) = struct_fields.iter().position(|(n, _)| n == field)
+                {
+                    let struct_name = meta.var_type.clone();
+                    // %arg_* params are already %StructName* — skip the extra load.
+                    let obj_ptr = if meta.llvm_name.starts_with("%arg_") {
+                        meta.llvm_name.clone()
+                    } else {
+                        let loaded = self.new_temp();
+                        self.emit(&format!(
+                            "  {} = load %{}*, %{}** {}",
+                            loaded, struct_name, struct_name, meta.llvm_name
+                        ));
+                        loaded
+                    };
+                    let field_type = struct_fields[field_idx].1.clone();
+                    let llvm_ft = self.type_to_llvm(&field_type);
+                    let gep = self.new_temp();
+                    self.emit(&format!(
+                        "  {} = getelementptr %{}, %{}* {}, i32 0, i32 {}",
+                        gep, struct_name, struct_name, obj_ptr, field_idx
+                    ));
+                    self.emit(&format!(
+                        "  store {} {}, {}* {}",
+                        llvm_ft, value_reg, llvm_ft, gep
+                    ));
+                }
 
                 value_reg
             }
@@ -2020,14 +2020,15 @@ impl CodeGenerator {
                             let free_if_owned = |cg: &mut CodeGenerator, node: &AstNode| {
                                 if let AstNode::Identifier { name, .. } = node
                                     && let Some(meta) = cg.current_function_vars.get(name).cloned()
-                                        && !meta.is_string_literal {
-                                            let loaded = cg.new_temp();
-                                            cg.emit(&format!(
-                                                "  {} = load i8*, i8** {}",
-                                                loaded, meta.llvm_name
-                                            ));
-                                            cg.emit(&format!("  call void @free(i8* {})", loaded));
-                                        }
+                                    && !meta.is_string_literal
+                                {
+                                    let loaded = cg.new_temp();
+                                    cg.emit(&format!(
+                                        "  {} = load i8*, i8** {}",
+                                        loaded, meta.llvm_name
+                                    ));
+                                    cg.emit(&format!("  call void @free(i8* {})", loaded));
+                                }
                             };
                             free_if_owned(self, right);
                             free_if_owned(self, left);
@@ -2245,9 +2246,9 @@ impl CodeGenerator {
 
             AstNode::Identifier { name, .. } => {
                 if let Some(meta) = self.current_function_vars.get(name).cloned() {
-                    if meta.llvm_name.starts_with("%arg_") {
-                        meta.llvm_name.clone()
-                    } else if self.struct_types.contains_key(&meta.var_type) && !meta.is_heap {
+                    if meta.llvm_name.starts_with("%arg_")
+                        || (self.struct_types.contains_key(&meta.var_type) && !meta.is_heap)
+                    {
                         meta.llvm_name.clone()
                     } else {
                         let result = self.new_temp();
@@ -2590,30 +2591,28 @@ impl CodeGenerator {
                     }
                     "lock" if !self.is_unsafe_fn => {
                         if let AstNode::Identifier { name: obj_name, .. } = object.as_ref()
-                            && let Some(meta) = self.current_function_vars.get(obj_name).cloned() {
-                                let mutex_ptr = if meta.llvm_name.starts_with("%arg_") {
-                                    meta.llvm_name.clone()
-                                } else {
-                                    let loaded = self.new_temp();
-                                    self.emit(&format!(
-                                        "  {} = load i8*, i8** {}",
-                                        loaded, meta.llvm_name
-                                    ));
-                                    loaded
-                                };
+                            && let Some(meta) = self.current_function_vars.get(obj_name).cloned()
+                        {
+                            let mutex_ptr = if meta.llvm_name.starts_with("%arg_") {
+                                meta.llvm_name.clone()
+                            } else {
+                                let loaded = self.new_temp();
                                 self.emit(&format!(
-                                    "  call void @EnterCriticalSection(i8* {})",
-                                    mutex_ptr
+                                    "  {} = load i8*, i8** {}",
+                                    loaded, meta.llvm_name
                                 ));
-                                self.guard_vars.insert(obj_name.clone());
-                                return mutex_ptr;
-                            }
+                                loaded
+                            };
+                            self.emit(&format!(
+                                "  call void @EnterCriticalSection(i8* {})",
+                                mutex_ptr
+                            ));
+                            self.guard_vars.insert(obj_name.clone());
+                            return mutex_ptr;
+                        }
                         "null".to_string()
                     }
-                    "lock" => {
-                        
-                        self.gen_node(object)
-                    }
+                    "lock" => self.gen_node(object),
                     _ => "0".to_string(),
                 }
             }
@@ -2795,9 +2794,10 @@ impl CodeGenerator {
         if let AstNode::Block(stmts) = body {
             for stmt in stmts {
                 if let AstNode::LetBinding { name, .. } = stmt
-                    && !escaping.contains(name) {
-                        self.non_escaping.insert(name.clone());
-                    }
+                    && !escaping.contains(name)
+                {
+                    self.non_escaping.insert(name.clone());
+                }
             }
         }
 

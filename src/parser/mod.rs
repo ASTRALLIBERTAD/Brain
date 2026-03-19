@@ -1,11 +1,11 @@
 // struct's impl across multiple files inside the same module if done right, I guess.
 
 mod decl;
+pub mod error;
 mod expr;
 mod pattern;
 mod stmt;
 mod types;
-pub mod error;
 
 pub use error::ParseErrors;
 
@@ -65,9 +65,9 @@ impl<'a> Parser<'a> {
                 self.advance();
                 self.parse_function(false, true)
             }
-            TokenKind::Keyword(Keyword::Fn)     => self.parse_function(false, false),
-            TokenKind::Keyword(Keyword::Struct)  => self.parse_struct_def(),
-            TokenKind::Keyword(Keyword::Enum)    => self.parse_enum_def(),
+            TokenKind::Keyword(Keyword::Fn) => self.parse_function(false, false),
+            TokenKind::Keyword(Keyword::Struct) => self.parse_struct_def(),
+            TokenKind::Keyword(Keyword::Enum) => self.parse_enum_def(),
             _ => self.parse_statement(),
         }
     }
@@ -118,7 +118,11 @@ impl<'a> Parser<'a> {
     }
 
     pub(crate) fn previous_kind(&self) -> &TokenKind {
-        if self.current == 0 { &TokenKind::Eof } else { &self.tokens[self.current - 1].kind }
+        if self.current == 0 {
+            &TokenKind::Eof
+        } else {
+            &self.tokens[self.current - 1].kind
+        }
     }
 
     pub(crate) fn is_at_end(&self) -> bool {
@@ -137,34 +141,53 @@ impl<'a> Parser<'a> {
         matches!(&self.peek().kind, TokenKind::Keyword(k) if k == kw)
     }
 
-    pub(crate) fn check_identifier(&self) -> bool {
-        matches!(self.peek_kind(), TokenKind::Identifier(_))
-    }
-
     // Consuming helpers
 
     /// Advance if the current token matches `kind`, otherwise do nothing.
     pub(crate) fn eat(&mut self, kind: &TokenKind) -> bool {
-        if self.check(kind) { self.advance(); true } else { false }
+        if self.check(kind) {
+            self.advance();
+            true
+        } else {
+            false
+        }
     }
 
     pub(crate) fn eat_keyword(&mut self, kw: &Keyword) -> bool {
-        if self.check_keyword(kw) { self.advance(); true } else { false }
+        if self.check_keyword(kw) {
+            self.advance();
+            true
+        } else {
+            false
+        }
     }
 
     /// Advance and return `Ok(())`, or return a contextual error.
     pub(crate) fn expect(&mut self, kind: &TokenKind, msg: &str) -> Result<(), String> {
-        if self.check(kind) { self.advance(); Ok(()) } else { Err(self.error(msg)) }
+        if self.check(kind) {
+            self.advance();
+            Ok(())
+        } else {
+            Err(self.error(msg))
+        }
     }
 
     pub(crate) fn expect_keyword(&mut self, kw: &Keyword, msg: &str) -> Result<(), String> {
-        if self.check_keyword(kw) { self.advance(); Ok(()) } else { Err(self.error(msg)) }
+        if self.check_keyword(kw) {
+            self.advance();
+            Ok(())
+        } else {
+            Err(self.error(msg))
+        }
     }
 
     /// Consume an `Identifier` token and return its name.
     pub(crate) fn expect_identifier(&mut self, msg: &str) -> Result<String, String> {
         match self.peek().kind.clone() {
-            TokenKind::Identifier(name) => { self.advance(); Ok(name) }
+            TokenKind::Identifier(name) => {
+                self.advance();
+                Ok(name)
+            }
             _ => Err(self.error(msg)),
         }
     }
@@ -181,7 +204,10 @@ impl<'a> Parser<'a> {
         // which is far more actionable than just "Expected ';'".
         format!(
             "{}:{}:{}: {} (found {})",
-            self.filename, t.line, t.column, message,
+            self.filename,
+            t.line,
+            t.column,
+            message,
             t.kind.description(),
         )
     }
