@@ -1,0 +1,190 @@
+# Triggered when you push a version tag like v0.1.0-beta.1
+# Creates a GitHub Release with:
+#   brain-windows-x64.zip   — brain.exe + clang.exe + lld-link.exe
+#   brain-linux-x64.tar.gz  — brain + clang (static)
+#
+# Users unzip and run brain directly — no LLVM install needed.
+# Brain will find the bundled clang via the BRAIN_CLANG env var or
+# by looking next to its own executable.
+
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"           # v0.1.0, v0.1.0-beta.1, etc.
+
+env:
+  CARGO_TERM_COLOR: always
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+  LLVM_VERSION: "18"
+  LLVM_FULL_VERSION: "18.1.8"
+
+jobs:
+
+  # ── Windows release ───────────────────────────────────────────────────────────
+  release-windows:
+    name: Release / windows-x64
+    runs-on: windows-latest
+
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Build brain (release)
+        run: cargo build --release
+
+      # Download the official LLVM pre-built Windows package
+      - name: Download LLVM ${{ env.LLVM_FULL_VERSION }} for Windows
+        shell: pwsh
+        run: |
+          $url = "https://github.com/llvm/llvm-project/releases/download/llvmorg-${{ env.LLVM_FULL_VERSION }}/LLVM-${{ env.LLVM_FULL_VERSION }}-win64.exe"
+          Write-Host "Downloading $url"
+          Invoke-WebRequest -Uri $url -OutFile llvm-installer.exe
+          # Run the installer silently, extract to ./llvm-dist
+          Start-Process -FilePath ".\llvm-installer.exe" -ArgumentList "/S", "/D=$pwd\llvm-dist" -Wait
+
+      - name: Package brain-windows-x64.zip
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Path dist
+
+          # Brain compiler
+          Copy-Item target\release\brain.exe dist\
+
+          # Bundled clang + linker — only the binaries users need
+          Copy-Item llvm-dist\bin\clang.exe     dist\
+          Copy-Item llvm-dist\bin\clang-18.exe  dist\ -ErrorAction SilentlyContinue
+          Copy-Item llvm-dist\bin\lld-link.exe  dist\
+          Copy-Item llvm-dist\bin\ld.lld.exe    dist\ -ErrorAction SilentlyContinue
+
+          # README so users know how to use the bundle
+          $llvmVer = "${{ env.LLVM_FULL_VERSION }}"
+          $readme = @"
+Brain Compiler - Windows x64
+=============================
+
+Usage:
+  brain.exe <source.brn>          Compile source.brn to source.exe
+  brain.exe <source.brn> output   Compile to a specific output name
+
+Bundled clang $llvmVer is included - no separate LLVM install needed.
+Brain will automatically find clang.exe in the same directory.
+
+If you already have LLVM installed and want to use your own clang,
+set the BRAIN_CLANG environment variable:
+  set BRAIN_CLANG=C:\Program Files\LLVM\bin\clang.exe
+"@
+          $readme | Out-File -FilePath dist\README.txt -Encoding utf8
+
+          Compress-Archive -Path dist\* -DestinationPath brain-windows-x64.zip
+          Write-Host "Package contents:"
+          Get-ChildItem dist\
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: brain-windows-x64
+          path: brain-windows-x64.zip
+
+  # ── Linux release ─────────────────────────────────────────────────────────────
+  release-linux:
+    name: Release / linux-x64
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Build brain (release)
+        run: cargo build --release
+
+      # Download the official LLVM pre-built Linux package (static clang)
+      - name: Download LLVM ${{ env.LLVM_FULL_VERSION }} for Linux
+        run: |
+          URL="https://github.com/llvm/llvm-project/releases/download/llvmorg-${{ env.LLVM_FULL_VERSION }}/clang+llvm-${{ env.LLVM_FULL_VERSION }}-x86_64-linux-gnu-ubuntu-22.04.tar.xz"
+          echo "Downloading $URL"
+          wget -q "$URL" -O llvm.tar.xz
+          mkdir llvm-dist
+          tar -xJf llvm.tar.xz -C llvm-dist --strip-components=1
+
+      - name: Package brain-linux-x64.tar.gz
+        run: |
+          mkdir -p dist
+
+          # Brain compiler
+          cp target/release/brain dist/
+
+          # Bundled clang — the single binary is all users need
+          cp llvm-dist/bin/clang-${{ env.LLVM_VERSION }} dist/clang
+          chmod +x dist/clang
+
+          # README
+          LLVM_VER="${{ env.LLVM_FULL_VERSION }}"
+          cat > dist/README.txt << README
+Brain Compiler - Linux x64
+===========================
+
+Usage:
+  ./brain <source.brn>           Compile source.brn to a binary
+  ./brain <source.brn> output    Compile to a specific output name
+
+Bundled clang ${LLVM_VER} is included - no separate LLVM install needed.
+Brain will automatically find clang in the same directory.
+
+If you already have LLVM installed and want to use your own clang,
+set the BRAIN_CLANG environment variable:
+  export BRAIN_CLANG=/usr/bin/clang-18
+README
+
+          tar -czf brain-linux-x64.tar.gz -C dist .
+          echo "Package contents:"
+          ls -lh dist/
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: brain-linux-x64
+          path: brain-linux-x64.tar.gz
+
+  # ── Create GitHub Release ─────────────────────────────────────────────────────
+  publish:
+    name: Publish GitHub Release
+    needs: [release-windows, release-linux]
+    runs-on: ubuntu-latest
+
+    permissions:
+      contents: write    # needed to create releases and upload assets
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          name: "Brain ${{ github.ref_name }}"
+          draft: true      # opens as draft so you can review before publishing
+          prerelease: ${{ contains(github.ref_name, 'beta') || contains(github.ref_name, 'alpha') }}
+          body: |
+            ## Brain ${{ github.ref_name }}
+
+            ### Installation
+
+            **Windows** — download `brain-windows-x64.zip`, unzip anywhere, run `brain.exe`.
+            **Linux** — download `brain-linux-x64.tar.gz`, extract, run `./brain`.
+
+            No LLVM installation required — clang ${{ env.LLVM_FULL_VERSION }} is bundled.
+
+            ### What's changed
+            <!-- fill this in before publishing -->
+
+          files: |
+            artifacts/brain-windows-x64/brain-windows-x64.zip
+            artifacts/brain-linux-x64/brain-linux-x64.tar.gz
