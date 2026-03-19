@@ -69,18 +69,16 @@ jobs:
       - name: Build brain
         run: cargo build --release
 
-      - name: Download LLVM for Linux
+      - name: Install clang-18
         run: |
-          URL="https://github.com/llvm/llvm-project/releases/download/llvmorg-${LLVM_FULL_VERSION}/clang+llvm-${LLVM_FULL_VERSION}-x86_64-linux-gnu-ubuntu-22.04.tar.xz"
-          wget -q "$URL" -O llvm.tar.xz
-          mkdir llvm-dist
-          tar -xJf llvm.tar.xz -C llvm-dist --strip-components=1
+          sudo apt-get install -y clang-18
 
       - name: Package
         run: |
           mkdir -p dist
           cp target/release/brain dist/
-          cp llvm-dist/bin/clang-${LLVM_VERSION} dist/clang
+          # Copy the clang-18 binary from the runner (already installed via apt)
+          cp $(which clang-18) dist/clang
           chmod +x dist/clang
           echo "Brain Compiler - Linux x64" > dist/README.txt
           echo "Usage: ./brain source.brn [output]" >> dist/README.txt
