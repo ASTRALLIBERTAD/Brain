@@ -60,6 +60,7 @@ jobs:
   e2e:
     name: e2e / ${{ matrix.os }}
     needs: [clippy, test]
+    continue-on-error: true   # both always run to completion; CI still reports red
     strategy:
       fail-fast: false
       matrix:
@@ -185,13 +186,16 @@ jobs:
             exit 1
           fi
 
-      # ── Upload .ll files on any failure so you can inspect the IR ──────────
-      - name: Upload LLVM IR on failure
-        if: failure()
+      # ── Always upload .ll files so you can inspect the IR on any run ────────
+      # Brain writes the .ll before invoking clang, so it exists even when
+      # clang fails — useful for debugging codegen problems on either platform.
+      - name: Upload LLVM IR
+        if: always()
         uses: actions/upload-artifact@v4
         with:
           name: llvm-ir-${{ matrix.os }}
           path: |
             examples/main.ll
             examples/game/main.ll
-          retention-days: 7
+          if-no-files-found: ignore
+          retention-days: 14
