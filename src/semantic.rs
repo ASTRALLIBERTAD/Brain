@@ -1,4 +1,4 @@
-use crate::parser::{AstNode, BinOp, Pattern};
+use crate::ast::{AstNode, BinOp, Pattern};
 use std::collections::HashMap;
 
 #[derive(Debug, Clone)]

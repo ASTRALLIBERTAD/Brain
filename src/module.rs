@@ -1,7 +1,10 @@
 // I think this implementation is not good, I don't know hahaha
 
 use crate::lexer::Lexer;
-use crate::parser::{AstNode, Parser};
+
+use crate::ast::AstNode;
+use crate::parser::Parser;
+
 use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::path::Path;

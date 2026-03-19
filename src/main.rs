@@ -2,6 +2,7 @@ use std::env;
 use std::fs;
 use std::process;
 
+mod ast; // ← extracted from parser; codegen/semantic/module import from here
 mod codegen;
 mod lexer;
 mod module;
@@ -64,6 +65,8 @@ fn compile_file(input_file: &str, output_file: &str) {
 
     println!("  [2/5] Parsing...");
     let mut parser = Parser::new(tokens, input_file);
+    // parse() now returns ParseErrors which implements Display — prints all
+    // errors at once instead of stopping at the first missing semicolon.
     let ast = match parser.parse() {
         Ok(ast) => ast,
         Err(e) => {
@@ -93,13 +96,10 @@ fn compile_file(input_file: &str, output_file: &str) {
     let mut codegen = CodeGenerator::new();
     let llvm_ir = codegen.generate(&ast);
 
-    // Detect missing main() before invoking the linker — gives a clear error
-    // instead of the cryptic "subsystem must be defined" from lld-link.
     let has_main = llvm_ir.contains("define i32 @main()");
     if !has_main {
         eprintln!("Error: no 'main' function found in '{}'", input_file);
         eprintln!("  Brain programs must define a 'fn main()' entry point.");
-        eprintln!("  If you're writing a library, compile with --lib (not yet supported).");
         process::exit(1);
     }
 
@@ -121,17 +121,13 @@ fn compile_file(input_file: &str, output_file: &str) {
         .arg("-Wno-override-module");
 
     if cfg!(target_os = "windows") {
-        cmd.arg("-fuse-ld=lld");
-        cmd.arg("-lkernel32");
-        // Tell lld-link this is a console application — required when
-        // there's no WinMain (our entry point is always @main / console).
-        cmd.arg("-Wl,/subsystem:console");
+        cmd.arg("-fuse-ld=lld")
+            .arg("-lkernel32")
+            .arg("-Wl,/subsystem:console");
     } else if cfg!(target_os = "linux") {
-        cmd.arg("-static");
-        cmd.arg("-nostdlib");
+        cmd.arg("-static").arg("-nostdlib");
     } else if cfg!(target_os = "macos") {
-        cmd.arg("-nostdlib");
-        cmd.arg("-lSystem");
+        cmd.arg("-nostdlib").arg("-lSystem");
     }
 
     match cmd.output() {

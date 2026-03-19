@@ -1,4 +1,4 @@
-use crate::parser::{AstNode, BinOp, Parameter, Pattern};
+use crate::ast::{AstNode, BinOp, Parameter, Pattern};
 use std::collections::HashMap;
 
 pub struct CodeGenerator {
@@ -2177,10 +2177,10 @@ impl CodeGenerator {
                 let result = self.new_temp();
 
                 match op {
-                    crate::parser::UnOp::Not => {
+                    crate::ast::UnOp::Not => {
                         self.emit(&format!("  {} = xor i1 {}, true", result, operand_reg));
                     }
-                    crate::parser::UnOp::Negate => {
+                    crate::ast::UnOp::Negate => {
                         self.emit(&format!("  {} = sub i64 0, {}", result, operand_reg));
                     }
                 }
