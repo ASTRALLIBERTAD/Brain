@@ -1,6 +1,6 @@
+use super::Parser;
 use crate::ast::Pattern;
 use crate::lexer::TokenKind;
-use super::Parser;
 
 impl<'a> Parser<'a> {
     pub(crate) fn parse_pattern(&mut self) -> Result<Pattern, String> {
@@ -14,7 +14,10 @@ impl<'a> Parser<'a> {
             TokenKind::Minus => {
                 self.advance();
                 match self.peek().kind.clone() {
-                    TokenKind::Integer(n) => { self.advance(); Ok(Pattern::NumberPattern(-n)) }
+                    TokenKind::Integer(n) => {
+                        self.advance();
+                        Ok(Pattern::NumberPattern(-n))
+                    }
                     _ => Err(self.error("Expected a number after '-' in match pattern")),
                 }
             }
@@ -42,7 +45,11 @@ impl<'a> Parser<'a> {
                     } else {
                         None
                     };
-                    Ok(Pattern::EnumPattern { enum_name: name, variant, binding })
+                    Ok(Pattern::EnumPattern {
+                        enum_name: name,
+                        variant,
+                        binding,
+                    })
                 } else {
                     Ok(Pattern::Identifier(name))
                 }

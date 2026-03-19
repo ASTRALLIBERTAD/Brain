@@ -40,27 +40,27 @@ pub enum Keyword {
 impl Keyword {
     pub fn from_str(s: &str) -> Option<Self> {
         match s {
-            "let"      => Some(Keyword::Let),
-            "mut"      => Some(Keyword::Mut),
-            "fn"       => Some(Keyword::Fn),
-            "struct"   => Some(Keyword::Struct),
-            "enum"     => Some(Keyword::Enum),
-            "if"       => Some(Keyword::If),
-            "else"     => Some(Keyword::Else),
-            "while"    => Some(Keyword::While),
-            "for"      => Some(Keyword::For),
-            "in"       => Some(Keyword::In),
-            "return"   => Some(Keyword::Return),
-            "break"    => Some(Keyword::Break),
+            "let" => Some(Keyword::Let),
+            "mut" => Some(Keyword::Mut),
+            "fn" => Some(Keyword::Fn),
+            "struct" => Some(Keyword::Struct),
+            "enum" => Some(Keyword::Enum),
+            "if" => Some(Keyword::If),
+            "else" => Some(Keyword::Else),
+            "while" => Some(Keyword::While),
+            "for" => Some(Keyword::For),
+            "in" => Some(Keyword::In),
+            "return" => Some(Keyword::Return),
+            "break" => Some(Keyword::Break),
             "continue" => Some(Keyword::Continue),
-            "match"    => Some(Keyword::Match),
-            "export"   => Some(Keyword::Export),
-            "import"   => Some(Keyword::Import),
-            "from"     => Some(Keyword::From),
-            "unsafe"   => Some(Keyword::Unsafe),
-            "true"     => Some(Keyword::True),
-            "false"    => Some(Keyword::False),
-            _          => None,
+            "match" => Some(Keyword::Match),
+            "export" => Some(Keyword::Export),
+            "import" => Some(Keyword::Import),
+            "from" => Some(Keyword::From),
+            "unsafe" => Some(Keyword::Unsafe),
+            "true" => Some(Keyword::True),
+            "false" => Some(Keyword::False),
+            _ => None,
         }
     }
 }
@@ -81,20 +81,20 @@ pub enum PrimitiveType {
 impl PrimitiveType {
     pub fn from_str(s: &str) -> Option<Self> {
         match s {
-            "int"    => Some(PrimitiveType::Int),
-            "bool"   => Some(PrimitiveType::Bool),
+            "int" => Some(PrimitiveType::Int),
+            "bool" => Some(PrimitiveType::Bool),
             "string" => Some(PrimitiveType::String),
-            "char"   => Some(PrimitiveType::Char),
-            _        => None,
+            "char" => Some(PrimitiveType::Char),
+            _ => None,
         }
     }
 
     pub fn as_str(&self) -> &'static str {
         match self {
-            PrimitiveType::Int    => "int",
-            PrimitiveType::Bool   => "bool",
+            PrimitiveType::Int => "int",
+            PrimitiveType::Bool => "bool",
             PrimitiveType::String => "string",
-            PrimitiveType::Char   => "char",
+            PrimitiveType::Char => "char",
         }
     }
 }
@@ -131,9 +131,9 @@ pub enum TokenKind {
     GreaterEqual,
 
     // Logical
-    And,       // &&
-    Or,        // ||
-    Not,       // !
+    And, // &&
+    Or,  // ||
+    Not, // !
 
     // Assignment / reference
     Assign,    // =
@@ -153,11 +153,11 @@ pub enum TokenKind {
     DoubleColon, // ::  (emitted directly — was peek-ahead hacked before)
     Comma,
     Dot,
-    DotDot,      // ..
+    DotDot, // ..
 
     // Arrows
-    Arrow,       // ->
-    FatArrow,    // =>
+    Arrow,    // ->
+    FatArrow, // =>
 
     Eof,
 }
@@ -168,70 +168,70 @@ impl TokenKind {
         match self {
             TokenKind::Keyword(k) => {
                 let s = match k {
-                    Keyword::Let      => "'let'",
-                    Keyword::Mut      => "'mut'",
-                    Keyword::Fn       => "'fn'",
-                    Keyword::Struct   => "'struct'",
-                    Keyword::Enum     => "'enum'",
-                    Keyword::If       => "'if'",
-                    Keyword::Else     => "'else'",
-                    Keyword::While    => "'while'",
-                    Keyword::For      => "'for'",
-                    Keyword::In       => "'in'",
-                    Keyword::Return   => "'return'",
-                    Keyword::Break    => "'break'",
+                    Keyword::Let => "'let'",
+                    Keyword::Mut => "'mut'",
+                    Keyword::Fn => "'fn'",
+                    Keyword::Struct => "'struct'",
+                    Keyword::Enum => "'enum'",
+                    Keyword::If => "'if'",
+                    Keyword::Else => "'else'",
+                    Keyword::While => "'while'",
+                    Keyword::For => "'for'",
+                    Keyword::In => "'in'",
+                    Keyword::Return => "'return'",
+                    Keyword::Break => "'break'",
                     Keyword::Continue => "'continue'",
-                    Keyword::Match    => "'match'",
-                    Keyword::Export   => "'export'",
-                    Keyword::Import   => "'import'",
-                    Keyword::From     => "'from'",
-                    Keyword::Unsafe   => "'unsafe'",
-                    Keyword::True     => "'true'",
-                    Keyword::False    => "'false'",
+                    Keyword::Match => "'match'",
+                    Keyword::Export => "'export'",
+                    Keyword::Import => "'import'",
+                    Keyword::From => "'from'",
+                    Keyword::Unsafe => "'unsafe'",
+                    Keyword::True => "'true'",
+                    Keyword::False => "'false'",
                 };
                 s.into()
             }
             TokenKind::PrimitiveType(p) => match p {
-                PrimitiveType::Int    => "'int'".into(),
-                PrimitiveType::Bool   => "'bool'".into(),
+                PrimitiveType::Int => "'int'".into(),
+                PrimitiveType::Bool => "'bool'".into(),
                 PrimitiveType::String => "'string'".into(),
-                PrimitiveType::Char   => "'char'".into(),
+                PrimitiveType::Char => "'char'".into(),
             },
-            TokenKind::Integer(n)    => format!("integer {}", n).into(),
-            TokenKind::StringLit(_)  => "string literal".into(),
-            TokenKind::CharLit(_)    => "char literal".into(),
+            TokenKind::Integer(n) => format!("integer {}", n).into(),
+            TokenKind::StringLit(_) => "string literal".into(),
+            TokenKind::CharLit(_) => "char literal".into(),
             TokenKind::Identifier(n) => format!("identifier `{}`", n).into(),
-            TokenKind::Plus          => "'+'".into(),
-            TokenKind::Minus         => "'-'".into(),
-            TokenKind::Star          => "'*'".into(),
-            TokenKind::Slash         => "'/'".into(),
-            TokenKind::Percent       => "'%'".into(),
-            TokenKind::EqualEqual    => "'=='".into(),
-            TokenKind::NotEqual      => "'!='".into(),
-            TokenKind::LessThan      => "'<'".into(),
-            TokenKind::LessEqual     => "'<='".into(),
-            TokenKind::GreaterThan   => "'>'".into(),
-            TokenKind::GreaterEqual  => "'>='".into(),
-            TokenKind::And           => "'&&'".into(),
-            TokenKind::Or            => "'||'".into(),
-            TokenKind::Not           => "'!'".into(),
-            TokenKind::Assign        => "'='".into(),
-            TokenKind::Ampersand     => "'&'".into(),
-            TokenKind::LParen        => "'('".into(),
-            TokenKind::RParen        => "')'".into(),
-            TokenKind::LBrace        => "'{'".into(),
-            TokenKind::RBrace        => "'}'".into(),
-            TokenKind::LBracket      => "'['".into(),
-            TokenKind::RBracket      => "']'".into(),
-            TokenKind::Semicolon     => "';'".into(),
-            TokenKind::Colon         => "':'".into(),
-            TokenKind::DoubleColon   => "'::'".into(),
-            TokenKind::Comma         => "','".into(),
-            TokenKind::Dot           => "'.'".into(),
-            TokenKind::DotDot        => "'..'".into(),
-            TokenKind::Arrow         => "'->'".into(),
-            TokenKind::FatArrow      => "'=>'".into(),
-            TokenKind::Eof           => "end of file".into(),
+            TokenKind::Plus => "'+'".into(),
+            TokenKind::Minus => "'-'".into(),
+            TokenKind::Star => "'*'".into(),
+            TokenKind::Slash => "'/'".into(),
+            TokenKind::Percent => "'%'".into(),
+            TokenKind::EqualEqual => "'=='".into(),
+            TokenKind::NotEqual => "'!='".into(),
+            TokenKind::LessThan => "'<'".into(),
+            TokenKind::LessEqual => "'<='".into(),
+            TokenKind::GreaterThan => "'>'".into(),
+            TokenKind::GreaterEqual => "'>='".into(),
+            TokenKind::And => "'&&'".into(),
+            TokenKind::Or => "'||'".into(),
+            TokenKind::Not => "'!'".into(),
+            TokenKind::Assign => "'='".into(),
+            TokenKind::Ampersand => "'&'".into(),
+            TokenKind::LParen => "'('".into(),
+            TokenKind::RParen => "')'".into(),
+            TokenKind::LBrace => "'{'".into(),
+            TokenKind::RBrace => "'}'".into(),
+            TokenKind::LBracket => "'['".into(),
+            TokenKind::RBracket => "']'".into(),
+            TokenKind::Semicolon => "';'".into(),
+            TokenKind::Colon => "':'".into(),
+            TokenKind::DoubleColon => "'::'".into(),
+            TokenKind::Comma => "','".into(),
+            TokenKind::Dot => "'.'".into(),
+            TokenKind::DotDot => "'..'".into(),
+            TokenKind::Arrow => "'->'".into(),
+            TokenKind::FatArrow => "'=>'".into(),
+            TokenKind::Eof => "end of file".into(),
         }
     }
 

@@ -15,6 +15,39 @@ use module::{ModuleCache, resolve_imports};
 use parser::Parser;
 use semantic::SemanticAnalyzer;
 
+/// Find clang in this priority order:
+///   1. BRAIN_CLANG environment variable (user override)
+///   2. Bundled clang next to the brain binary (release bundle)
+///   3. System PATH (developer install)
+fn resolve_clang() -> String {
+    // 1. Explicit override
+    if let Ok(path) = env::var("BRAIN_CLANG") {
+        return path;
+    }
+
+    // 2. Bundled next to this executable
+    if let Ok(exe) = env::current_exe()
+        && let Some(dir) = exe.parent()
+    {
+        let bundled = if cfg!(target_os = "windows") {
+            dir.join("clang.exe")
+        } else {
+            dir.join("clang")
+        };
+        if bundled.exists() {
+            return bundled.to_string_lossy().into_owned();
+        }
+    }
+
+    // 3. Fall back to system PATH
+    #[allow(clippy::if_same_then_else)]
+    if cfg!(target_os = "windows") {
+        "clang".to_string()
+    } else {
+        "clang".to_string()
+    }
+}
+
 fn main() {
     let args: Vec<String> = env::args().collect();
 
@@ -114,7 +147,11 @@ fn compile_file(input_file: &str, output_file: &str) {
     println!("  Generated LLVM IR: {}", ll_file);
     println!("  Linking to executable: {}", output_exe);
 
-    let mut cmd = process::Command::new("clang");
+    // Resolve clang: BRAIN_CLANG env var → bundled next to brain binary → system PATH
+    let clang = resolve_clang();
+    println!("  Using clang: {}", clang);
+
+    let mut cmd = process::Command::new(&clang);
     cmd.arg(&ll_file)
         .arg("-o")
         .arg(&output_exe)
@@ -125,7 +162,8 @@ fn compile_file(input_file: &str, output_file: &str) {
             .arg("-lkernel32")
             .arg("-Wl,/subsystem:console");
     } else if cfg!(target_os = "linux") {
-        cmd.arg("-static").arg("-nostdlib");
+        // Brain's IR declares syscall(i64, ...) which maps to the libc
+        // syscall() wrapper — no extra flags needed, clang links libc by default.
     } else if cfg!(target_os = "macos") {
         cmd.arg("-nostdlib").arg("-lSystem");
     }
@@ -142,11 +180,12 @@ fn compile_file(input_file: &str, output_file: &str) {
         }
         Err(e) => {
             eprintln!("Error: clang not found. {}", e);
-            println!("LLVM IR saved to: {}", ll_file);
-            println!(
+            eprintln!("LLVM IR saved to: {}", ll_file);
+            eprintln!(
                 "You can compile manually with: clang {} -o {}",
                 ll_file, output_exe
             );
+            process::exit(1);
         }
     }
 }

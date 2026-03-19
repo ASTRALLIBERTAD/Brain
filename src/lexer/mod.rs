@@ -42,39 +42,148 @@ impl<'a> Lexer<'a> {
 
         let kind = match ch {
             // Single-char unambiguous tokens
-            '+' => { self.advance(); TokenKind::Plus }
-            '*' => { self.advance(); TokenKind::Star }
-            '/' => { self.advance(); TokenKind::Slash }
-            '%' => { self.advance(); TokenKind::Percent }
-            '(' => { self.advance(); TokenKind::LParen }
-            ')' => { self.advance(); TokenKind::RParen }
-            '{' => { self.advance(); TokenKind::LBrace }
-            '}' => { self.advance(); TokenKind::RBrace }
-            '[' => { self.advance(); TokenKind::LBracket }
-            ']' => { self.advance(); TokenKind::RBracket }
-            ';' => { self.advance(); TokenKind::Semicolon }
-            ',' => { self.advance(); TokenKind::Comma }
+            '+' => {
+                self.advance();
+                TokenKind::Plus
+            }
+            '*' => {
+                self.advance();
+                TokenKind::Star
+            }
+            '/' => {
+                self.advance();
+                TokenKind::Slash
+            }
+            '%' => {
+                self.advance();
+                TokenKind::Percent
+            }
+            '(' => {
+                self.advance();
+                TokenKind::LParen
+            }
+            ')' => {
+                self.advance();
+                TokenKind::RParen
+            }
+            '{' => {
+                self.advance();
+                TokenKind::LBrace
+            }
+            '}' => {
+                self.advance();
+                TokenKind::RBrace
+            }
+            '[' => {
+                self.advance();
+                TokenKind::LBracket
+            }
+            ']' => {
+                self.advance();
+                TokenKind::RBracket
+            }
+            ';' => {
+                self.advance();
+                TokenKind::Semicolon
+            }
+            ',' => {
+                self.advance();
+                TokenKind::Comma
+            }
 
             // Two-char possibilities
-            '-' => { self.advance(); if self.peek() == '>' { self.advance(); TokenKind::Arrow } else { TokenKind::Minus } }
-            '=' => { self.advance(); match self.peek() { '=' => { self.advance(); TokenKind::EqualEqual } '>' => { self.advance(); TokenKind::FatArrow } _ => TokenKind::Assign } }
-            '<' => { self.advance(); if self.peek() == '=' { self.advance(); TokenKind::LessEqual } else { TokenKind::LessThan } }
-            '>' => { self.advance(); if self.peek() == '=' { self.advance(); TokenKind::GreaterEqual } else { TokenKind::GreaterThan } }
-            '!' => { self.advance(); if self.peek() == '=' { self.advance(); TokenKind::NotEqual } else { TokenKind::Not } }
-            '&' => { self.advance(); if self.peek() == '&' { self.advance(); TokenKind::And } else { TokenKind::Ampersand } }
-            ':' => { self.advance(); if self.peek() == ':' { self.advance(); TokenKind::DoubleColon } else { TokenKind::Colon } }
-            '.' => { self.advance(); if self.peek() == '.' { self.advance(); TokenKind::DotDot } else { TokenKind::Dot } }
+            '-' => {
+                self.advance();
+                if self.peek() == '>' {
+                    self.advance();
+                    TokenKind::Arrow
+                } else {
+                    TokenKind::Minus
+                }
+            }
+            '=' => {
+                self.advance();
+                match self.peek() {
+                    '=' => {
+                        self.advance();
+                        TokenKind::EqualEqual
+                    }
+                    '>' => {
+                        self.advance();
+                        TokenKind::FatArrow
+                    }
+                    _ => TokenKind::Assign,
+                }
+            }
+            '<' => {
+                self.advance();
+                if self.peek() == '=' {
+                    self.advance();
+                    TokenKind::LessEqual
+                } else {
+                    TokenKind::LessThan
+                }
+            }
+            '>' => {
+                self.advance();
+                if self.peek() == '=' {
+                    self.advance();
+                    TokenKind::GreaterEqual
+                } else {
+                    TokenKind::GreaterThan
+                }
+            }
+            '!' => {
+                self.advance();
+                if self.peek() == '=' {
+                    self.advance();
+                    TokenKind::NotEqual
+                } else {
+                    TokenKind::Not
+                }
+            }
+            '&' => {
+                self.advance();
+                if self.peek() == '&' {
+                    self.advance();
+                    TokenKind::And
+                } else {
+                    TokenKind::Ampersand
+                }
+            }
+            ':' => {
+                self.advance();
+                if self.peek() == ':' {
+                    self.advance();
+                    TokenKind::DoubleColon
+                } else {
+                    TokenKind::Colon
+                }
+            }
+            '.' => {
+                self.advance();
+                if self.peek() == '.' {
+                    self.advance();
+                    TokenKind::DotDot
+                } else {
+                    TokenKind::Dot
+                }
+            }
 
             '|' => {
                 self.advance();
-                if self.peek() == '|' { self.advance(); TokenKind::Or }
-                else { return Err(self.error("Unexpected character '|' — did you mean '||'?")); }
+                if self.peek() == '|' {
+                    self.advance();
+                    TokenKind::Or
+                } else {
+                    return Err(self.error("Unexpected character '|' — did you mean '||'?"));
+                }
             }
 
-            '"'  => self.lex_string()?,
+            '"' => self.lex_string()?,
             '\'' => self.lex_char()?,
 
-            c if c.is_ascii_digit()            => self.lex_integer(),
+            c if c.is_ascii_digit() => self.lex_integer(),
             c if c.is_alphabetic() || c == '_' => self.lex_word(),
 
             c => return Err(self.error(&format!("Unexpected character '{}'", c))),
@@ -126,13 +235,13 @@ impl<'a> Lexer<'a> {
 
     fn lex_escape(&mut self) -> Result<char, String> {
         let c = match self.peek() {
-            'n'  => '\n',
-            't'  => '\t',
-            'r'  => '\r',
+            'n' => '\n',
+            't' => '\t',
+            'r' => '\r',
             '\\' => '\\',
-            '"'  => '"',
+            '"' => '"',
             '\'' => '\'',
-            c    => return Err(self.error(&format!("Unknown escape sequence '\\{}'", c))),
+            c => return Err(self.error(&format!("Unknown escape sequence '\\{}'", c))),
         };
         self.advance();
         Ok(c)
@@ -151,7 +260,11 @@ impl<'a> Lexer<'a> {
         let mut buf = String::new();
         while !self.is_at_end() {
             let c = self.peek();
-            if c.is_alphanumeric() || c == '_' { buf.push(self.advance()); } else { break; }
+            if c.is_alphanumeric() || c == '_' {
+                buf.push(self.advance());
+            } else {
+                break;
+            }
         }
         if let Some(kw) = Keyword::from_str(&buf) {
             return TokenKind::Keyword(kw);
@@ -167,10 +280,18 @@ impl<'a> Lexer<'a> {
     fn skip_whitespace_and_comments(&mut self) {
         loop {
             match self.peek() {
-                ' ' | '\t' | '\r' => { self.advance(); }
-                '\n' => { self.advance(); self.line += 1; self.column = 1; }
+                ' ' | '\t' | '\r' => {
+                    self.advance();
+                }
+                '\n' => {
+                    self.advance();
+                    self.line += 1;
+                    self.column = 1;
+                }
                 '/' if self.peek_ahead(1) == '/' => {
-                    while !self.is_at_end() && self.peek() != '\n' { self.advance(); }
+                    while !self.is_at_end() && self.peek() != '\n' {
+                        self.advance();
+                    }
                 }
                 _ => break,
             }
@@ -190,18 +311,29 @@ impl<'a> Lexer<'a> {
             src_line,
             " ".repeat(self.column.saturating_sub(1)),
             w = w,
-        ) + message + "\n"
-            + &format!("  \x1b[1;34m-->\x1b[0m {}:{}:{}", self.filename, self.line, self.column)
+        ) + message
+            + "\n"
+            + &format!(
+                "  \x1b[1;34m-->\x1b[0m {}:{}:{}",
+                self.filename, self.line, self.column
+            )
     }
 
     // Char helpers
 
     fn peek(&self) -> char {
-        if self.is_at_end() { '\0' } else { self.chars[self.current] }
+        if self.is_at_end() {
+            '\0'
+        } else {
+            self.chars[self.current]
+        }
     }
 
     fn peek_ahead(&self, offset: usize) -> char {
-        self.chars.get(self.current + offset).copied().unwrap_or('\0')
+        self.chars
+            .get(self.current + offset)
+            .copied()
+            .unwrap_or('\0')
     }
 
     fn advance(&mut self) -> char {

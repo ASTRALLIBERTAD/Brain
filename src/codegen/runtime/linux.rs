@@ -34,10 +34,11 @@ impl CodeGenerator {
 
         // realloc: alloc new + copy (bump allocator — no real free)
         self.emit("define i8* @realloc(i8* %ptr, i64 %size) {");
+        self.emit("rc_entry:");
         self.emit("  %new = call i8* @malloc(i64 %size)");
         self.emit("  br label %rc_loop");
         self.emit("rc_loop:");
-        self.emit("  %rc_i = phi i64 [ 0, %0 ], [ %rc_next, %rc_loop ]");
+        self.emit("  %rc_i = phi i64 [ 0, %rc_entry ], [ %rc_next, %rc_copy ]");
         self.emit("  %rc_done = icmp eq i64 %rc_i, %size");
         self.emit("  br i1 %rc_done, label %rc_exit, label %rc_copy");
         self.emit("rc_copy:");
@@ -173,6 +174,39 @@ impl CodeGenerator {
         self.emit("  %ft_fd = ptrtoint i8* %handle to i64");
         self.emit("  %ft_pos = call i64 (i64, ...) @syscall(i64 8, i64 %ft_fd, i64 0, i64 1)");
         self.emit("  ret i64 %ft_pos");
+        self.emit("}");
+        self.emit("");
+
+        // ── Mutex primitives (Linux: pure IR spinlock, no pthread/libc) ─────────
+        // Windows uses CRITICAL_SECTION (40 bytes) with the value at offset 40.
+        // We keep the same memory layout on Linux so the rest of codegen is
+        // platform-unaware: 40 bytes of spinlock state, value at offset 40.
+        // The lock word lives at offset 0 (i64). Spin on cmpxchg — fine for
+        // Brain's current single-threaded examples; no futex needed.
+
+        self.emit("define void @InitializeCriticalSection(i8* %cs) {");
+        self.emit("  %lp = bitcast i8* %cs to i64*");
+        self.emit("  store i64 0, i64* %lp");
+        self.emit("  ret void");
+        self.emit("}");
+        self.emit("");
+
+        self.emit("define void @EnterCriticalSection(i8* %cs) {");
+        self.emit("  %lp = bitcast i8* %cs to i64*");
+        self.emit("  br label %spin");
+        self.emit("spin:");
+        self.emit("  %res = cmpxchg i64* %lp, i64 0, i64 1 acq_rel acquire");
+        self.emit("  %got = extractvalue { i64, i1 } %res, 1");
+        self.emit("  br i1 %got, label %done, label %spin");
+        self.emit("done:");
+        self.emit("  ret void");
+        self.emit("}");
+        self.emit("");
+
+        self.emit("define void @LeaveCriticalSection(i8* %cs) {");
+        self.emit("  %lp = bitcast i8* %cs to i64*");
+        self.emit("  store atomic i64 0, i64* %lp release, align 8");
+        self.emit("  ret void");
         self.emit("}");
         self.emit("");
     }

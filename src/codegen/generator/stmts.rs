@@ -3,8 +3,8 @@
 // BEFORE calling gen_node(value) so StructInit reads the same decision
 // instead of recalculating it independently.
 
-use crate::ast::{AstNode, BinOp};
 use super::{CodeGenerator, LoopLabels, VarMetadata};
+use crate::ast::{AstNode, BinOp};
 
 impl CodeGenerator {
     pub(super) fn gen_let_binding(&mut self, name: &str, value: &AstNode) -> String {
@@ -17,9 +17,7 @@ impl CodeGenerator {
         // is_heap: this binding owns heap memory that block cleanup must free()
         let is_heap = !stack_promote
             && !is_mutex
-            && ((var_type == "string" && !is_string_literal)
-                || var_type == "Vec"
-                || is_struct);
+            && ((var_type == "string" && !is_string_literal) || var_type == "Vec" || is_struct);
 
         // Thread the decision to StructInit BEFORE generating the value so
         // both agree on how the memory was allocated.
@@ -31,7 +29,8 @@ impl CodeGenerator {
 
         // Guard tracking for .lock() calls
         if let AstNode::MethodCall { method, .. } = value
-            && method == "lock" && !self.is_unsafe_fn
+            && method == "lock"
+            && !self.is_unsafe_fn
         {
             self.guard_vars.insert(name.to_string());
         }
@@ -71,7 +70,10 @@ impl CodeGenerator {
         let ptr = self.new_temp();
         let llvm_type = self.type_to_llvm(&var_type);
         self.emit(&format!("  {} = alloca {}", ptr, llvm_type));
-        self.emit(&format!("  store {} {}, {}* {}", llvm_type, value_reg, llvm_type, ptr));
+        self.emit(&format!(
+            "  store {} {}, {}* {}",
+            llvm_type, value_reg, llvm_type, ptr
+        ));
 
         self.current_function_vars.insert(
             name.to_string(),
@@ -92,7 +94,10 @@ impl CodeGenerator {
         if let Some(meta) = self.current_function_vars.get(name).cloned() {
             let llvm_type = self.type_to_llvm(&meta.var_type);
             let llvm_name = meta.llvm_name.clone();
-            self.emit(&format!("  store {} {}, {}* {}", llvm_type, value_reg, llvm_type, llvm_name));
+            self.emit(&format!(
+                "  store {} {}, {}* {}",
+                llvm_type, value_reg, llvm_type, llvm_name
+            ));
         }
         value_reg
     }
@@ -126,7 +131,8 @@ impl CodeGenerator {
         let value_reg = self.gen_node(value);
 
         let is_guard = self.guard_vars.contains(object)
-            || self.current_function_vars
+            || self
+                .current_function_vars
                 .get(object)
                 .map(|m| m.var_type.starts_with("MutexGuard<"))
                 .unwrap_or(false);
@@ -141,12 +147,19 @@ impl CodeGenerator {
                     loaded
                 };
                 let val_gep = self.new_temp();
-                self.emit(&format!("  {} = getelementptr i8, i8* {}, i64 40", val_gep, guard_ptr));
+                self.emit(&format!(
+                    "  {} = getelementptr i8, i8* {}, i64 40",
+                    val_gep, guard_ptr
+                ));
                 let val_ptr = self.new_temp();
                 self.emit(&format!("  {} = bitcast i8* {} to i64*", val_ptr, val_gep));
-                self.emit(&format!("  store volatile i64 {}, i64* {}", value_reg, val_ptr));
+                self.emit(&format!(
+                    "  store volatile i64 {}, i64* {}",
+                    value_reg, val_ptr
+                ));
             }
-        } else if let Some(struct_fields) = self.current_function_vars
+        } else if let Some(struct_fields) = self
+            .current_function_vars
             .get(object)
             .map(|m| m.var_type.clone())
             .and_then(|t| self.struct_types.get(&t).cloned())
@@ -171,7 +184,10 @@ impl CodeGenerator {
                 "  {} = getelementptr %{}, %{}* {}, i32 0, i32 {}",
                 gep, struct_name, struct_name, obj_ptr, field_idx
             ));
-            self.emit(&format!("  store {} {}, {}* {}", llvm_ft, value_reg, llvm_ft, gep));
+            self.emit(&format!(
+                "  store {} {}, {}* {}",
+                llvm_ft, value_reg, llvm_ft, gep
+            ));
         }
 
         value_reg
@@ -211,7 +227,10 @@ impl CodeGenerator {
             for guard_slot in guards_to_unlock {
                 let mutex_ptr = self.new_temp();
                 self.emit(&format!("  {} = load i8*, i8** {}", mutex_ptr, guard_slot));
-                self.emit(&format!("  call void @LeaveCriticalSection(i8* {})", mutex_ptr));
+                self.emit(&format!(
+                    "  call void @LeaveCriticalSection(i8* {})",
+                    mutex_ptr
+                ));
             }
 
             for (llvm_name, var_type) in vars_to_free {
@@ -231,7 +250,10 @@ impl CodeGenerator {
                     let ptr_reg = self.new_temp();
                     self.emit(&format!("  {} = load i8*, i8** {}", ptr_reg, llvm_name));
                     let dp_raw = self.new_temp();
-                    self.emit(&format!("  {} = getelementptr i8, i8* {}, i64 16", dp_raw, ptr_reg));
+                    self.emit(&format!(
+                        "  {} = getelementptr i8, i8* {}, i64 16",
+                        dp_raw, ptr_reg
+                    ));
                     let dp = self.new_temp();
                     self.emit(&format!("  {} = bitcast i8* {} to i8**", dp, dp_raw));
                     let data = self.new_temp();
@@ -246,7 +268,8 @@ impl CodeGenerator {
             }
         }
 
-        self.current_function_vars.retain(|k, _| keys_before.contains(k));
+        self.current_function_vars
+            .retain(|k, _| keys_before.contains(k));
         self.guard_vars = guards_before;
         last_reg
     }
@@ -263,9 +286,15 @@ impl CodeGenerator {
         let end_label = self.new_label("endif");
 
         if else_block.is_some() {
-            self.emit(&format!("  br i1 {}, label %{}, label %{}", cond_reg, then_label, else_label));
+            self.emit(&format!(
+                "  br i1 {}, label %{}, label %{}",
+                cond_reg, then_label, else_label
+            ));
         } else {
-            self.emit(&format!("  br i1 {}, label %{}, label %{}", cond_reg, then_label, end_label));
+            self.emit(&format!(
+                "  br i1 {}, label %{}, label %{}",
+                cond_reg, then_label, end_label
+            ));
         }
 
         self.emit(&format!("{}:", then_label));
@@ -308,7 +337,10 @@ impl CodeGenerator {
         self.emit(&format!("  br label %{}", cond_label));
         self.emit(&format!("{}:", cond_label));
         let cond_reg = self.gen_node(condition);
-        self.emit(&format!("  br i1 {}, label %{}, label %{}", cond_reg, body_label, end_label));
+        self.emit(&format!(
+            "  br i1 {}, label %{}, label %{}",
+            cond_reg, body_label, end_label
+        ));
 
         self.emit(&format!("{}:", body_label));
         self.block_terminated = false;
@@ -323,15 +355,13 @@ impl CodeGenerator {
         "0".to_string()
     }
 
-    pub(super) fn gen_for(
-        &mut self,
-        variable: &str,
-        iterator: &AstNode,
-        body: &AstNode,
-    ) -> String {
+    pub(super) fn gen_for(&mut self, variable: &str, iterator: &AstNode, body: &AstNode) -> String {
         let (start_val, end_val) = if let AstNode::BinaryOp {
-            op: BinOp::DotDot, left, right,
-        } = iterator {
+            op: BinOp::DotDot,
+            left,
+            right,
+        } = iterator
+        {
             (self.gen_node(left), self.gen_node(right))
         } else {
             ("0".to_string(), self.gen_node(iterator))
@@ -373,8 +403,14 @@ impl CodeGenerator {
         self.emit(&format!("  {} = load i64, i64* {}", current, loop_var));
         self.emit(&format!("  {} = load i64, i64* {}", end_loaded, end_ptr));
         let cond = self.new_temp();
-        self.emit(&format!("  {} = icmp slt i64 {}, {}", cond, current, end_loaded));
-        self.emit(&format!("  br i1 {}, label %{}, label %{}", cond, body_label, end_label));
+        self.emit(&format!(
+            "  {} = icmp slt i64 {}, {}",
+            cond, current, end_loaded
+        ));
+        self.emit(&format!(
+            "  br i1 {}, label %{}, label %{}",
+            cond, body_label, end_label
+        ));
 
         self.emit(&format!("{}:", body_label));
         self.gen_node(body);

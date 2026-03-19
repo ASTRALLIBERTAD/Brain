@@ -8,7 +8,7 @@ mod stmts;
 use crate::ast::AstNode;
 use std::collections::{HashMap, HashSet};
 
-// ── Internal types ────────────────────────────────────────────────────────────
+// Internal types
 
 #[derive(Clone)]
 pub(super) struct VarMetadata {
@@ -24,7 +24,7 @@ pub(super) struct LoopLabels {
     pub(super) break_label: String,
 }
 
-// ── CodeGenerator ─────────────────────────────────────────────────────────────
+// CodeGenerator
 
 pub struct CodeGenerator {
     pub(super) output: String,
@@ -45,14 +45,11 @@ pub struct CodeGenerator {
     pub(super) pure_functions: HashSet<String>,
     pub(super) non_escaping: HashSet<String>,
 
-    // ── StructInit / LetBinding allocation coordination ───────────────────────
+    // StructInit / LetBinding allocation coordination
     // LetBinding sets these before calling gen_node(value) so StructInit reads
     // the *same* decision instead of recalculating independently.
-    // Before the fix: StructInit stack-promoted non-escaping structs while
-    // LetBinding always marked structs as is_heap=true → HeapFree on a stack
-    // address → heap corruption on Windows (exit 127).
     pub(super) current_binding: Option<String>,
-    pub(super) current_binding_is_heap: bool, // ← the fix
+    pub(super) current_binding_is_heap: bool,
 
     pub(super) is_unsafe_fn: bool,
     pub(super) guard_vars: HashSet<String>,
@@ -165,7 +162,7 @@ impl CodeGenerator {
         self.build_output()
     }
 
-    // ── Primitive helpers ─────────────────────────────────────────────────────
+    // Primitive helpers
 
     pub(super) fn new_temp(&mut self) -> String {
         let t = format!("%{}", self.temp_counter);

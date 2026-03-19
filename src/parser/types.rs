@@ -1,6 +1,6 @@
+use super::Parser;
 use crate::ast::Parameter;
 use crate::lexer::{Keyword, TokenKind};
-use super::Parser;
 
 impl<'a> Parser<'a> {
     // Types
@@ -18,7 +18,11 @@ impl<'a> Parser<'a> {
                 self.advance();
                 let mutable = self.eat_keyword(&Keyword::Mut);
                 let inner = self.parse_type()?;
-                Ok(if mutable { format!("&mut {}", inner) } else { format!("&{}", inner) })
+                Ok(if mutable {
+                    format!("&mut {}", inner)
+                } else {
+                    format!("&{}", inner)
+                })
             }
 
             // [T; N]
@@ -27,7 +31,10 @@ impl<'a> Parser<'a> {
                 let elem = self.parse_type()?;
                 self.expect(&TokenKind::Semicolon, "Expected ';' in array type [T; N]")?;
                 let size = match self.peek().kind.clone() {
-                    TokenKind::Integer(n) => { self.advance(); n as usize }
+                    TokenKind::Integer(n) => {
+                        self.advance();
+                        n as usize
+                    }
                     _ => return Err(self.error("Expected array size (integer) in [T; N]")),
                 };
                 self.expect(&TokenKind::RBracket, "Expected ']' to close array type")?;
@@ -43,7 +50,10 @@ impl<'a> Parser<'a> {
                     "Mutex" => {
                         self.expect(&TokenKind::LessThan, "Expected '<' after 'Mutex'")?;
                         let inner = self.parse_type()?;
-                        self.expect(&TokenKind::GreaterThan, "Expected '>' to close 'Mutex<...>'")?;
+                        self.expect(
+                            &TokenKind::GreaterThan,
+                            "Expected '>' to close 'Mutex<...>'",
+                        )?;
                         Ok(format!("Mutex<{}>", inner))
                     }
                     _ => Ok(name),
@@ -64,12 +74,17 @@ impl<'a> Parser<'a> {
         loop {
             // `&` and `mut` before parameter name
             let is_reference = self.eat(&TokenKind::Ampersand);
-            let is_mutable   = self.eat_keyword(&Keyword::Mut);
-            let name         = self.expect_identifier("Expected parameter name")?;
+            let is_mutable = self.eat_keyword(&Keyword::Mut);
+            let name = self.expect_identifier("Expected parameter name")?;
             self.expect(&TokenKind::Colon, "Expected ':' after parameter name")?;
-            let param_type   = self.parse_type()?;
+            let param_type = self.parse_type()?;
 
-            params.push(Parameter { is_reference, is_mutable, name, param_type });
+            params.push(Parameter {
+                is_reference,
+                is_mutable,
+                name,
+                param_type,
+            });
 
             if !self.eat(&TokenKind::Comma) {
                 break;
