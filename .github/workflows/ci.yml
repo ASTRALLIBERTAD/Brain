@@ -15,6 +15,7 @@ concurrency:
 env:
   CARGO_TERM_COLOR: always
   RUST_BACKTRACE: 1
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
 
 jobs:
 
@@ -76,11 +77,24 @@ jobs:
       - name: Install clang (Linux)
         if: runner.os == 'Linux'
         run: |
-          wget -qO- https://apt.llvm.org/llvm.sh | sudo bash -s 18
-          sudo apt-get install -y clang-18
+          sudo apt-get update -qq
+          sudo apt-get install -y clang-18 llvm-18
           sudo update-alternatives --install /usr/bin/clang clang /usr/bin/clang-18 100
+          clang --version
 
-      # Windows runners ship with LLVM 18 pre-installed — no install step needed.
+      - name: Add LLVM to PATH (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $llvm = "C:\Program Files\LLVM\bin"
+          if (Test-Path $llvm) {
+            echo "$llvm" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+            Write-Host "LLVM found at $llvm"
+          } else {
+            Write-Error "LLVM not found — install it or check the runner image"
+            exit 1
+          }
+          clang --version
 
       # ── Build Brain compiler ────────────────────────────────────────────────
       - name: Build brain compiler
