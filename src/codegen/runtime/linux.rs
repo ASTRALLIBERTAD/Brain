@@ -38,7 +38,7 @@ impl CodeGenerator {
         self.emit("  %new = call i8* @malloc(i64 %size)");
         self.emit("  br label %rc_loop");
         self.emit("rc_loop:");
-        self.emit("  %rc_i = phi i64 [ 0, %rc_entry ], [ %rc_next, %rc_loop ]");
+        self.emit("  %rc_i = phi i64 [ 0, %rc_entry ], [ %rc_next, %rc_copy ]");
         self.emit("  %rc_done = icmp eq i64 %rc_i, %size");
         self.emit("  br i1 %rc_done, label %rc_exit, label %rc_copy");
         self.emit("rc_copy:");
