@@ -34,10 +34,11 @@ impl CodeGenerator {
 
         // realloc: alloc new + copy (bump allocator — no real free)
         self.emit("define i8* @realloc(i8* %ptr, i64 %size) {");
+        self.emit("rc_entry:");
         self.emit("  %new = call i8* @malloc(i64 %size)");
         self.emit("  br label %rc_loop");
         self.emit("rc_loop:");
-        self.emit("  %rc_i = phi i64 [ 0, %0 ], [ %rc_next, %rc_loop ]");
+        self.emit("  %rc_i = phi i64 [ 0, %rc_entry ], [ %rc_next, %rc_loop ]");
         self.emit("  %rc_done = icmp eq i64 %rc_i, %size");
         self.emit("  br i1 %rc_done, label %rc_exit, label %rc_copy");
         self.emit("rc_copy:");
@@ -176,7 +177,7 @@ impl CodeGenerator {
         self.emit("}");
         self.emit("");
 
-        // Mutex primitives (Linux: pure IR spinlock, no pthread/libc)
+        // ── Mutex primitives (Linux: pure IR spinlock, no pthread/libc) ─────────
         // Windows uses CRITICAL_SECTION (40 bytes) with the value at offset 40.
         // We keep the same memory layout on Linux so the rest of codegen is
         // platform-unaware: 40 bytes of spinlock state, value at offset 40.
