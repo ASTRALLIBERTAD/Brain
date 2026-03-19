@@ -1,6 +1,6 @@
+use super::Parser;
 use crate::ast::{AstNode, BinOp, UnOp};
 use crate::lexer::{Keyword, TokenKind};
-use super::Parser;
 
 impl<'a> Parser<'a> {
     // Entry point
@@ -20,7 +20,11 @@ impl<'a> Parser<'a> {
         let mut left = self.parse_and()?;
         while self.eat(&TokenKind::Or) {
             let right = self.parse_and()?;
-            left = AstNode::BinaryOp { op: BinOp::Or, left: Box::new(left), right: Box::new(right) };
+            left = AstNode::BinaryOp {
+                op: BinOp::Or,
+                left: Box::new(left),
+                right: Box::new(right),
+            };
         }
         Ok(left)
     }
@@ -29,7 +33,11 @@ impl<'a> Parser<'a> {
         let mut left = self.parse_comparison()?;
         while self.eat(&TokenKind::And) {
             let right = self.parse_comparison()?;
-            left = AstNode::BinaryOp { op: BinOp::And, left: Box::new(left), right: Box::new(right) };
+            left = AstNode::BinaryOp {
+                op: BinOp::And,
+                left: Box::new(left),
+                right: Box::new(right),
+            };
         }
         Ok(left)
     }
@@ -38,16 +46,38 @@ impl<'a> Parser<'a> {
         let mut left = self.parse_additive()?;
         loop {
             let op = match self.peek_kind() {
-                TokenKind::EqualEqual   => { self.advance(); BinOp::Equal }
-                TokenKind::NotEqual     => { self.advance(); BinOp::NotEqual }
-                TokenKind::LessThan     => { self.advance(); BinOp::LessThan }
-                TokenKind::LessEqual    => { self.advance(); BinOp::LessEqual }
-                TokenKind::GreaterThan  => { self.advance(); BinOp::GreaterThan }
-                TokenKind::GreaterEqual => { self.advance(); BinOp::GreaterEqual }
+                TokenKind::EqualEqual => {
+                    self.advance();
+                    BinOp::Equal
+                }
+                TokenKind::NotEqual => {
+                    self.advance();
+                    BinOp::NotEqual
+                }
+                TokenKind::LessThan => {
+                    self.advance();
+                    BinOp::LessThan
+                }
+                TokenKind::LessEqual => {
+                    self.advance();
+                    BinOp::LessEqual
+                }
+                TokenKind::GreaterThan => {
+                    self.advance();
+                    BinOp::GreaterThan
+                }
+                TokenKind::GreaterEqual => {
+                    self.advance();
+                    BinOp::GreaterEqual
+                }
                 _ => break,
             };
             let right = self.parse_additive()?;
-            left = AstNode::BinaryOp { op, left: Box::new(left), right: Box::new(right) };
+            left = AstNode::BinaryOp {
+                op,
+                left: Box::new(left),
+                right: Box::new(right),
+            };
         }
         Ok(left)
     }
@@ -56,12 +86,22 @@ impl<'a> Parser<'a> {
         let mut left = self.parse_multiplicative()?;
         loop {
             let op = match self.peek_kind() {
-                TokenKind::Plus  => { self.advance(); BinOp::Add }
-                TokenKind::Minus => { self.advance(); BinOp::Sub }
+                TokenKind::Plus => {
+                    self.advance();
+                    BinOp::Add
+                }
+                TokenKind::Minus => {
+                    self.advance();
+                    BinOp::Sub
+                }
                 _ => break,
             };
             let right = self.parse_multiplicative()?;
-            left = AstNode::BinaryOp { op, left: Box::new(left), right: Box::new(right) };
+            left = AstNode::BinaryOp {
+                op,
+                left: Box::new(left),
+                right: Box::new(right),
+            };
         }
         Ok(left)
     }
@@ -70,13 +110,26 @@ impl<'a> Parser<'a> {
         let mut left = self.parse_unary()?;
         loop {
             let op = match self.peek_kind() {
-                TokenKind::Star    => { self.advance(); BinOp::Mul }
-                TokenKind::Slash   => { self.advance(); BinOp::Div }
-                TokenKind::Percent => { self.advance(); BinOp::Mod }
+                TokenKind::Star => {
+                    self.advance();
+                    BinOp::Mul
+                }
+                TokenKind::Slash => {
+                    self.advance();
+                    BinOp::Div
+                }
+                TokenKind::Percent => {
+                    self.advance();
+                    BinOp::Mod
+                }
                 _ => break,
             };
             let right = self.parse_unary()?;
-            left = AstNode::BinaryOp { op, left: Box::new(left), right: Box::new(right) };
+            left = AstNode::BinaryOp {
+                op,
+                left: Box::new(left),
+                right: Box::new(right),
+            };
         }
         Ok(left)
     }
@@ -86,12 +139,18 @@ impl<'a> Parser<'a> {
             TokenKind::Minus => {
                 self.advance();
                 let operand = self.parse_unary()?;
-                Ok(AstNode::UnaryOp { op: UnOp::Negate, operand: Box::new(operand) })
+                Ok(AstNode::UnaryOp {
+                    op: UnOp::Negate,
+                    operand: Box::new(operand),
+                })
             }
             TokenKind::Not => {
                 self.advance();
                 let operand = self.parse_unary()?;
-                Ok(AstNode::UnaryOp { op: UnOp::Not, operand: Box::new(operand) })
+                Ok(AstNode::UnaryOp {
+                    op: UnOp::Not,
+                    operand: Box::new(operand),
+                })
             }
             TokenKind::Ampersand => {
                 self.advance();
@@ -133,7 +192,9 @@ impl<'a> Parser<'a> {
                 let mut elems = Vec::new();
                 while !self.check(&TokenKind::RBracket) && !self.is_at_end() {
                     elems.push(self.parse_expression()?);
-                    if !self.eat(&TokenKind::Comma) { break; }
+                    if !self.eat(&TokenKind::Comma) {
+                        break;
+                    }
                 }
                 self.expect(&TokenKind::RBracket, "Expected ']' to close array literal")?;
                 Ok(AstNode::ArrayLit(elems))
@@ -172,13 +233,21 @@ impl<'a> Parser<'a> {
                 // .field  or  .method(args...)  — but NOT ..
                 TokenKind::Dot => {
                     self.advance();
-                    let field = self.expect_identifier("Expected field or method name after '.'")?;
+                    let field =
+                        self.expect_identifier("Expected field or method name after '.'")?;
                     if self.eat(&TokenKind::LParen) {
                         let args = self.parse_call_args()?;
                         self.expect(&TokenKind::RParen, "Expected ')'")?;
-                        left = AstNode::MethodCall { object: Box::new(left), method: field, args };
+                        left = AstNode::MethodCall {
+                            object: Box::new(left),
+                            method: field,
+                            args,
+                        };
                     } else {
-                        left = AstNode::MemberAccess { object: Box::new(left), field };
+                        left = AstNode::MemberAccess {
+                            object: Box::new(left),
+                            field,
+                        };
                     }
                 }
 
@@ -187,7 +256,10 @@ impl<'a> Parser<'a> {
                     self.advance();
                     let index = self.parse_expression()?;
                     self.expect(&TokenKind::RBracket, "Expected ']'")?;
-                    left = AstNode::Index { array: Box::new(left), index: Box::new(index) };
+                    left = AstNode::Index {
+                        array: Box::new(left),
+                        index: Box::new(index),
+                    };
                 }
 
                 // StructName { field: val, ... }
@@ -206,7 +278,10 @@ impl<'a> Parser<'a> {
                 // EnumName::Variant  or  EnumName::Variant(val)
                 // DoubleColon is a first-class token now — no peek_ahead hack.
                 TokenKind::DoubleColon => {
-                    if let AstNode::Identifier { name: enum_name, .. } = left {
+                    if let AstNode::Identifier {
+                        name: enum_name, ..
+                    } = left
+                    {
                         self.advance();
                         let variant = self.expect_identifier("Expected variant name after '::'")?;
                         let value = if self.eat(&TokenKind::LParen) {
@@ -221,7 +296,11 @@ impl<'a> Parser<'a> {
                         } else {
                             None
                         };
-                        left = AstNode::EnumValue { enum_name, variant, value };
+                        left = AstNode::EnumValue {
+                            enum_name,
+                            variant,
+                            value,
+                        };
                     } else {
                         break;
                     }
@@ -252,7 +331,9 @@ impl<'a> Parser<'a> {
             } else {
                 args.push(self.parse_expression()?);
             }
-            if !self.eat(&TokenKind::Comma) { break; }
+            if !self.eat(&TokenKind::Comma) {
+                break;
+            }
         }
         Ok(args)
     }

@@ -1,5 +1,5 @@
-use crate::ast::{AstNode, Parameter};
 use super::{CodeGenerator, VarMetadata};
+use crate::ast::{AstNode, Parameter};
 use crate::codegen::escape::EscapeAnalysis;
 
 impl CodeGenerator {
@@ -38,7 +38,8 @@ impl CodeGenerator {
             "void".to_string()
         };
 
-        self.function_signatures.insert(name.to_string(), ret_type.clone());
+        self.function_signatures
+            .insert(name.to_string(), ret_type.clone());
         self.current_function_name = name.to_string();
         self.current_function_return_type = ret_type.clone();
 
@@ -50,7 +51,10 @@ impl CodeGenerator {
             " nounwind"
         };
 
-        self.emit(&format!("\ndefine {} @{}({}){} {{", ret_type, mangled, param_list, fn_attrs));
+        self.emit(&format!(
+            "\ndefine {} @{}({}){} {{",
+            ret_type, mangled, param_list, fn_attrs
+        ));
         self.emit("entry:");
 
         self.bind_params(params);
@@ -74,50 +78,67 @@ impl CodeGenerator {
         if params.is_empty() {
             return String::new();
         }
-        params.iter().map(|p| {
-            let (type_is_ref, type_is_mut, inner_type) = Self::strip_ref_prefix(&p.param_type);
-            let type_is_ref = type_is_ref || p.is_reference;
-            let type_is_mut = type_is_mut || p.is_mutable;
+        params
+            .iter()
+            .map(|p| {
+                let (type_is_ref, type_is_mut, inner_type) = Self::strip_ref_prefix(&p.param_type);
+                let type_is_ref = type_is_ref || p.is_reference;
+                let type_is_mut = type_is_mut || p.is_mutable;
 
-            let param_type_str = if type_is_ref {
-                if inner_type.starts_with('[') {
-                    if let Some(size_str) = inner_type.split(';').nth(1) {
-                        let size = size_str.trim().trim_end_matches(']').trim()
-                            .parse::<usize>().unwrap_or(100);
-                        format!("[{} x i64]*", size)
+                let param_type_str = if type_is_ref {
+                    if inner_type.starts_with('[') {
+                        if let Some(size_str) = inner_type.split(';').nth(1) {
+                            let size = size_str
+                                .trim()
+                                .trim_end_matches(']')
+                                .trim()
+                                .parse::<usize>()
+                                .unwrap_or(100);
+                            format!("[{} x i64]*", size)
+                        } else {
+                            "i64*".to_string()
+                        }
+                    } else if inner_type.starts_with("Mutex<") {
+                        "i8*".to_string()
                     } else {
-                        "i64*".to_string()
+                        let base = self.type_to_llvm(inner_type);
+                        if base.ends_with('*') {
+                            base
+                        } else {
+                            format!("{}*", base)
+                        }
                     }
-                } else if inner_type.starts_with("Mutex<") {
-                    "i8*".to_string()
                 } else {
-                    let base = self.type_to_llvm(inner_type);
-                    if base.ends_with('*') { base } else { format!("{}*", base) }
+                    self.type_to_llvm(&p.param_type)
+                };
+
+                let is_mutex_param = inner_type.starts_with("Mutex<");
+                let is_simple_ptr = type_is_ref && !inner_type.starts_with('[');
+                let is_owned_ptr =
+                    !type_is_ref && Self::is_pointer_llvm_type(&p.param_type) && !type_is_mut;
+
+                let attrs = if is_mutex_param {
+                    ""
+                } else if is_simple_ptr {
+                    if !type_is_mut {
+                        "noalias readonly"
+                    } else {
+                        "noalias"
+                    }
+                } else if is_owned_ptr {
+                    "noalias readonly"
+                } else {
+                    ""
+                };
+
+                if attrs.is_empty() {
+                    format!("{} %arg_{}", param_type_str, p.name)
+                } else {
+                    format!("{} {} %arg_{}", param_type_str, attrs, p.name)
                 }
-            } else {
-                self.type_to_llvm(&p.param_type)
-            };
-
-            let is_mutex_param = inner_type.starts_with("Mutex<");
-            let is_simple_ptr = type_is_ref && !inner_type.starts_with('[');
-            let is_owned_ptr = !type_is_ref && Self::is_pointer_llvm_type(&p.param_type) && !type_is_mut;
-
-            let attrs = if is_mutex_param {
-                ""
-            } else if is_simple_ptr {
-                if !type_is_mut { "noalias readonly" } else { "noalias" }
-            } else if is_owned_ptr {
-                "noalias readonly"
-            } else {
-                ""
-            };
-
-            if attrs.is_empty() {
-                format!("{} %arg_{}", param_type_str, p.name)
-            } else {
-                format!("{} {} %arg_{}", param_type_str, attrs, p.name)
-            }
-        }).collect::<Vec<_>>().join(", ")
+            })
+            .collect::<Vec<_>>()
+            .join(", ")
     }
 
     fn bind_params(&mut self, params: &[Parameter]) {
@@ -127,7 +148,9 @@ impl CodeGenerator {
 
             if type_is_ref {
                 let array_size = if inner_type.starts_with('[') {
-                    inner_type.split(';').nth(1)
+                    inner_type
+                        .split(';')
+                        .nth(1)
                         .and_then(|s| s.trim().trim_end_matches(']').trim().parse::<usize>().ok())
                 } else {
                     None

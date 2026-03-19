@@ -175,5 +175,38 @@ impl CodeGenerator {
         self.emit("  ret i64 %ft_pos");
         self.emit("}");
         self.emit("");
+
+        // Mutex primitives (Linux: pure IR spinlock, no pthread/libc)
+        // Windows uses CRITICAL_SECTION (40 bytes) with the value at offset 40.
+        // We keep the same memory layout on Linux so the rest of codegen is
+        // platform-unaware: 40 bytes of spinlock state, value at offset 40.
+        // The lock word lives at offset 0 (i64). Spin on cmpxchg — fine for
+        // Brain's current single-threaded examples; no futex needed.
+
+        self.emit("define void @InitializeCriticalSection(i8* %cs) {");
+        self.emit("  %lp = bitcast i8* %cs to i64*");
+        self.emit("  store i64 0, i64* %lp");
+        self.emit("  ret void");
+        self.emit("}");
+        self.emit("");
+
+        self.emit("define void @EnterCriticalSection(i8* %cs) {");
+        self.emit("  %lp = bitcast i8* %cs to i64*");
+        self.emit("  br label %spin");
+        self.emit("spin:");
+        self.emit("  %res = cmpxchg i64* %lp, i64 0, i64 1 acq_rel acquire");
+        self.emit("  %got = extractvalue { i64, i1 } %res, 1");
+        self.emit("  br i1 %got, label %done, label %spin");
+        self.emit("done:");
+        self.emit("  ret void");
+        self.emit("}");
+        self.emit("");
+
+        self.emit("define void @LeaveCriticalSection(i8* %cs) {");
+        self.emit("  %lp = bitcast i8* %cs to i64*");
+        self.emit("  store atomic i64 0, i64* %lp release, align 8");
+        self.emit("  ret void");
+        self.emit("}");
+        self.emit("");
     }
 }

@@ -302,15 +302,17 @@ impl<'a> SemanticAnalyzer<'a> {
                         _ => None,
                     };
                     if let Some(var) = right_var
-                        && self.get_type(var) == Some("string") {
-                            self.check_not_consumed(var)?;
-                            self.consume_variable(var)?;
-                        }
+                        && self.get_type(var) == Some("string")
+                    {
+                        self.check_not_consumed(var)?;
+                        self.consume_variable(var)?;
+                    }
                     if let Some(var) = left_var
-                        && self.get_type(var) == Some("string") {
-                            self.check_not_consumed(var)?;
-                            self.consume_variable(var)?;
-                        }
+                        && self.get_type(var) == Some("string")
+                    {
+                        self.check_not_consumed(var)?;
+                        self.consume_variable(var)?;
+                    }
                 }
                 Ok(())
             }
@@ -381,17 +383,16 @@ impl<'a> SemanticAnalyzer<'a> {
                     self.current_column = location.column;
                     if let Some(info) = self.lookup_variable(obj_name) {
                         let obj_type = info.var_type.clone();
-                        if obj_type.starts_with("Mutex<")
-                            && method != "lock" {
-                                return Err(format!(
-                                    "{}:{}:{}: Error: '{}' is not a valid method on Mutex — only '.lock()' is allowed\n    Help: Use '{}.lock()' to acquire the guard",
-                                    self.filename,
-                                    self.current_line,
-                                    self.current_column,
-                                    method,
-                                    obj_name
-                                ));
-                            }
+                        if obj_type.starts_with("Mutex<") && method != "lock" {
+                            return Err(format!(
+                                "{}:{}:{}: Error: '{}' is not a valid method on Mutex — only '.lock()' is allowed\n    Help: Use '{}.lock()' to acquire the guard",
+                                self.filename,
+                                self.current_line,
+                                self.current_column,
+                                method,
+                                obj_name
+                            ));
+                        }
                     }
                 }
                 Ok(())
@@ -465,39 +466,42 @@ impl<'a> SemanticAnalyzer<'a> {
             return Ok(());
         }
         if let Some(info) = self.lookup_variable(name)
-            && info.is_consumed {
-                return Err(format!(
-                    "{}:{}:{}: Error: use of moved value '{}'\n    Note: value moved at line {}, cannot be used again\n    Help: Consider borrowing '&{}' to keep ownership",
-                    self.filename,
-                    self.current_line,
-                    self.current_column,
-                    name,
-                    info.declared_line,
-                    name
-                ));
-            }
+            && info.is_consumed
+        {
+            return Err(format!(
+                "{}:{}:{}: Error: use of moved value '{}'\n    Note: value moved at line {}, cannot be used again\n    Help: Consider borrowing '&{}' to keep ownership",
+                self.filename,
+                self.current_line,
+                self.current_column,
+                name,
+                info.declared_line,
+                name
+            ));
+        }
         Ok(())
     }
 
     fn check_is_mutable(&self, name: &str) -> Result<(), String> {
         if let Some(info) = self.lookup_variable(name)
-            && !info.is_mutable {
-                return Err(format!(
-                    "{}:{}:{}: Error: cannot assign to immutable variable '{}'\n    Help: Consider declaring with 'let mut {}'",
-                    self.filename, self.current_line, self.current_column, name, name
-                ));
-            }
+            && !info.is_mutable
+        {
+            return Err(format!(
+                "{}:{}:{}: Error: cannot assign to immutable variable '{}'\n    Help: Consider declaring with 'let mut {}'",
+                self.filename, self.current_line, self.current_column, name, name
+            ));
+        }
         Ok(())
     }
 
     fn check_not_borrowed(&self, name: &str) -> Result<(), String> {
         if let Some(info) = self.lookup_variable(name)
-            && info.borrow_count > 0 {
-                return Err(format!(
-                    "{}:{}:{}: Error: cannot move '{}' while borrowed\n    Note: {} active borrow(s) exist",
-                    self.filename, self.current_line, self.current_column, name, info.borrow_count
-                ));
-            }
+            && info.borrow_count > 0
+        {
+            return Err(format!(
+                "{}:{}:{}: Error: cannot move '{}' while borrowed\n    Note: {} active borrow(s) exist",
+                self.filename, self.current_line, self.current_column, name, info.borrow_count
+            ));
+        }
         Ok(())
     }
 

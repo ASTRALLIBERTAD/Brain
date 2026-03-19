@@ -4,9 +4,9 @@
 // match dispatch and delegates to the appropriate parser instead of
 // duplicating the token sequence.
 
+use super::Parser;
 use crate::ast::{AstNode, EnumVariant, Field};
 use crate::lexer::{Keyword, TokenKind};
-use super::Parser;
 
 impl<'a> Parser<'a> {
     // Import
@@ -31,7 +31,10 @@ impl<'a> Parser<'a> {
         self.expect_keyword(&Keyword::From, "Expected 'from' after import list")?;
 
         let path = match self.peek().kind.clone() {
-            TokenKind::StringLit(s) => { self.advance(); s }
+            TokenKind::StringLit(s) => {
+                self.advance();
+                s
+            }
             _ => return Err(self.error("Expected a file path string after 'from'")),
         };
 
@@ -54,20 +57,28 @@ impl<'a> Parser<'a> {
             TokenKind::Keyword(Keyword::Let) => self.parse_let_binding(true),
             TokenKind::Keyword(Keyword::Struct) => {
                 let mut node = self.parse_struct_def()?;
-                if let AstNode::StructDef { ref mut is_exported, .. } = node {
+                if let AstNode::StructDef {
+                    ref mut is_exported,
+                    ..
+                } = node
+                {
                     *is_exported = true;
                 }
                 Ok(node)
             }
             TokenKind::Keyword(Keyword::Enum) => {
                 let mut node = self.parse_enum_def()?;
-                if let AstNode::EnumDef { ref mut is_exported, .. } = node {
+                if let AstNode::EnumDef {
+                    ref mut is_exported,
+                    ..
+                } = node
+                {
                     *is_exported = true;
                 }
                 Ok(node)
             }
             _ => Err(self.error(
-                "'export' can only be applied to 'fn', 'unsafe fn', 'let', 'struct', or 'enum'"
+                "'export' can only be applied to 'fn', 'unsafe fn', 'let', 'struct', or 'enum'",
             )),
         }
     }
@@ -93,7 +104,14 @@ impl<'a> Parser<'a> {
         };
 
         let body = Box::new(self.parse_block()?);
-        Ok(AstNode::FunctionDef { name, params, return_type, body, is_exported, is_unsafe })
+        Ok(AstNode::FunctionDef {
+            name,
+            params,
+            return_type,
+            body,
+            is_exported,
+            is_unsafe,
+        })
     }
 
     // Struct
@@ -109,11 +127,18 @@ impl<'a> Parser<'a> {
             self.expect(&TokenKind::Colon, "Expected ':' after field name")?;
             let field_type = self.parse_type()?;
             self.eat(&TokenKind::Comma); // trailing comma is optional
-            fields.push(Field { name: field_name, field_type });
+            fields.push(Field {
+                name: field_name,
+                field_type,
+            });
         }
 
         self.expect(&TokenKind::RBrace, "Expected '}' to close struct body")?;
-        Ok(AstNode::StructDef { name, fields, is_exported: false })
+        Ok(AstNode::StructDef {
+            name,
+            fields,
+            is_exported: false,
+        })
     }
 
     // Enum
@@ -133,12 +158,19 @@ impl<'a> Parser<'a> {
             } else {
                 None
             };
-            variants.push(EnumVariant { name: variant_name, value_type });
+            variants.push(EnumVariant {
+                name: variant_name,
+                value_type,
+            });
             self.eat(&TokenKind::Comma);
         }
 
         self.expect(&TokenKind::RBrace, "Expected '}' to close enum body")?;
-        Ok(AstNode::EnumDef { name, variants, is_exported: false })
+        Ok(AstNode::EnumDef {
+            name,
+            variants,
+            is_exported: false,
+        })
     }
 
     // let binding
@@ -160,6 +192,13 @@ impl<'a> Parser<'a> {
         let value = Box::new(self.parse_expression()?);
         self.expect(&TokenKind::Semicolon, "Expected ';' after let binding")?;
 
-        Ok(AstNode::LetBinding { mutable, name, type_annotation, value, location, is_exported })
+        Ok(AstNode::LetBinding {
+            mutable,
+            name,
+            type_annotation,
+            value,
+            location,
+            is_exported,
+        })
     }
 }

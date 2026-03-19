@@ -1,19 +1,19 @@
+use super::Parser;
 use crate::ast::{AstNode, BinOp, Location, MatchArm};
 use crate::lexer::{Keyword, TokenKind};
-use super::Parser;
 
 impl<'a> Parser<'a> {
     // ── Statement dispatcher ─────────────────────────────────────────────────
 
     pub(crate) fn parse_statement(&mut self) -> Result<AstNode, String> {
         match self.peek().kind.clone() {
-            TokenKind::Keyword(Keyword::Let)      => self.parse_let_binding(false),
-            TokenKind::Keyword(Keyword::If)       => self.parse_if(),
-            TokenKind::Keyword(Keyword::While)    => self.parse_while(),
-            TokenKind::Keyword(Keyword::For)      => self.parse_for(),
-            TokenKind::Keyword(Keyword::Match)    => self.parse_match(),
-            TokenKind::Keyword(Keyword::Return)   => self.parse_return(),
-            TokenKind::Keyword(Keyword::Break)    => {
+            TokenKind::Keyword(Keyword::Let) => self.parse_let_binding(false),
+            TokenKind::Keyword(Keyword::If) => self.parse_if(),
+            TokenKind::Keyword(Keyword::While) => self.parse_while(),
+            TokenKind::Keyword(Keyword::For) => self.parse_for(),
+            TokenKind::Keyword(Keyword::Match) => self.parse_match(),
+            TokenKind::Keyword(Keyword::Return) => self.parse_return(),
+            TokenKind::Keyword(Keyword::Break) => {
                 self.advance();
                 self.expect(&TokenKind::Semicolon, "Expected ';' after 'break'")?;
                 Ok(AstNode::Break)
@@ -72,7 +72,11 @@ impl<'a> Parser<'a> {
         self.expect(&TokenKind::Assign, "Expected '='")?;
         let value = Box::new(self.parse_expression()?);
         self.expect(&TokenKind::Semicolon, "Expected ';' after assignment")?;
-        Ok(AstNode::Assignment { name, value, location })
+        Ok(AstNode::Assignment {
+            name,
+            value,
+            location,
+        })
     }
 
     fn parse_array_assignment_or_index(&mut self, location: Location) -> Result<AstNode, String> {
@@ -84,7 +88,12 @@ impl<'a> Parser<'a> {
         if self.eat(&TokenKind::Assign) {
             let value = Box::new(self.parse_expression()?);
             self.expect(&TokenKind::Semicolon, "Expected ';'")?;
-            Ok(AstNode::ArrayAssignment { array: name, index: Box::new(index), value, location })
+            Ok(AstNode::ArrayAssignment {
+                array: name,
+                index: Box::new(index),
+                value,
+                location,
+            })
         } else {
             // It was just an index expression used as a statement.
             self.expect(&TokenKind::Semicolon, "Expected ';'")?;
@@ -102,7 +111,12 @@ impl<'a> Parser<'a> {
         self.expect(&TokenKind::Assign, "Expected '='")?;
         let value = Box::new(self.parse_expression()?);
         self.expect(&TokenKind::Semicolon, "Expected ';'")?;
-        Ok(AstNode::MemberAssignment { object, field, value, location })
+        Ok(AstNode::MemberAssignment {
+            object,
+            field,
+            value,
+            location,
+        })
     }
 
     // ── Block ────────────────────────────────────────────────────────────────
@@ -150,7 +164,11 @@ impl<'a> Parser<'a> {
             None
         };
 
-        Ok(AstNode::If { condition, then_block, else_block })
+        Ok(AstNode::If {
+            condition,
+            then_block,
+            else_block,
+        })
     }
 
     pub(crate) fn parse_while(&mut self) -> Result<AstNode, String> {
@@ -186,7 +204,11 @@ impl<'a> Parser<'a> {
         };
 
         let body = Box::new(self.parse_block()?);
-        Ok(AstNode::For { variable, iterator: Box::new(iterator), body })
+        Ok(AstNode::For {
+            variable,
+            iterator: Box::new(iterator),
+            body,
+        })
     }
 
     pub(crate) fn parse_match(&mut self) -> Result<AstNode, String> {

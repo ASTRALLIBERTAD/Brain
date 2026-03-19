@@ -53,7 +53,7 @@ impl CodeGenerator {
         self.output = header;
     }
 
-    // ── Shared string primitives (strlen/strcmp/strcpy) ─────────────────────
+    // Shared string primitives (strlen/strcmp/strcpy)
     // Emitted as pure IR — no libc or syscall dependency.
 
     pub(super) fn emit_shared_string_ops(&mut self) {
@@ -123,7 +123,7 @@ impl CodeGenerator {
         self.emit("");
     }
 
-    // ── int_to_string (stack and heap variants) ─────────────────────────────
+    // int_to_string (stack and heap variants)
 
     fn emit_int_to_string(&mut self) {
         // Stack variant — used by brn_print_int on Windows to avoid malloc
@@ -212,7 +212,7 @@ impl CodeGenerator {
         self.emit("");
     }
 
-    // ── File I/O helpers (platform-neutral wrappers around fopen/fclose/etc.) ─
+    // File I/O helpers (platform-neutral wrappers around fopen/fclose/etc.)
 
     fn emit_file_helpers(&mut self) {
         self.emit("define i8* @read_file_impl(i8* %filename) {");
@@ -256,7 +256,7 @@ impl CodeGenerator {
         self.emit("");
     }
 
-    // ── Vec helpers ─────────────────────────────────────────────────────────
+    // Vec helpers
 
     fn emit_vec_helpers(&mut self) {
         self.emit("define i8* @vec_new_impl() {");
