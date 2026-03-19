@@ -1,5 +1,5 @@
 use crate::ast::Parameter;
-use crate::lexer::{Keyword, PrimitiveType, TokenKind};
+use crate::lexer::{Keyword, TokenKind};
 use super::Parser;
 
 impl<'a> Parser<'a> {

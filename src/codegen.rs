@@ -397,11 +397,7 @@ impl CodeGenerator {
                 Self::collect_calls(iterator, queue);
                 Self::collect_calls(body, queue);
             }
-            AstNode::Return(v) => {
-                if let Some(n) = v {
-                    Self::collect_calls(n, queue);
-                }
-            }
+            AstNode::Return(Some(n)) => Self::collect_calls(n, queue),
             AstNode::BinaryOp { left, right, .. } => {
                 Self::collect_calls(left, queue);
                 Self::collect_calls(right, queue);
@@ -1196,8 +1192,8 @@ impl CodeGenerator {
             }
 
             AstNode::MemberAccess { object, field } => {
-                if let AstNode::Identifier { name: obj_name, .. } = object.as_ref() {
-                    if (self.guard_vars.contains(obj_name.as_str())
+                if let AstNode::Identifier { name: obj_name, .. } = object.as_ref()
+                    && (self.guard_vars.contains(obj_name.as_str())
                         || self
                             .current_function_vars
                             .get(obj_name.as_str())
@@ -1237,13 +1233,12 @@ impl CodeGenerator {
                         ));
                         return result;
                     }
-                }
 
                 let obj_reg = self.gen_node(object);
                 let struct_name = self.infer_struct_name(object);
 
-                if let Some(struct_fields) = self.struct_types.get(&struct_name).cloned() {
-                    if let Some(field_idx) = struct_fields.iter().position(|(n, _)| n == field) {
+                if let Some(struct_fields) = self.struct_types.get(&struct_name).cloned()
+                    && let Some(field_idx) = struct_fields.iter().position(|(n, _)| n == field) {
                         let field_type = struct_fields[field_idx].1.clone();
                         let llvm_field_type = self.type_to_llvm(&field_type);
 
@@ -1259,7 +1254,6 @@ impl CodeGenerator {
                         ));
                         return result;
                     }
-                }
                 "0".to_string()
             }
 
@@ -1555,11 +1549,10 @@ impl CodeGenerator {
                 let var_type = self.infer_type(value);
 
                 // If the value is a .lock() call, register this binding as a guard
-                if let AstNode::MethodCall { method, .. } = value.as_ref() {
-                    if method == "lock" && !self.is_unsafe_fn {
+                if let AstNode::MethodCall { method, .. } = value.as_ref()
+                    && method == "lock" && !self.is_unsafe_fn {
                         self.guard_vars.insert(name.clone());
                     }
-                }
 
                 let is_string_literal = matches!(value.as_ref(), AstNode::StringLit(_));
                 let is_struct = self.struct_types.contains_key(&var_type);
@@ -1704,9 +1697,8 @@ impl CodeGenerator {
                     .get(object.as_str())
                     .map(|m| m.var_type.clone())
                     .and_then(|t| self.struct_types.get(&t).cloned())
-                {
-                    if let Some(meta) = self.current_function_vars.get(object.as_str()).cloned() {
-                        if let Some(field_idx) = struct_fields.iter().position(|(n, _)| n == field)
+                    && let Some(meta) = self.current_function_vars.get(object.as_str()).cloned()
+                        && let Some(field_idx) = struct_fields.iter().position(|(n, _)| n == field)
                         {
                             let struct_name = meta.var_type.clone();
                             // %arg_* params are already %StructName* — skip the extra load.
@@ -1732,8 +1724,6 @@ impl CodeGenerator {
                                 llvm_ft, value_reg, llvm_ft, gep
                             ));
                         }
-                    }
-                }
 
                 value_reg
             }
@@ -2028,10 +2018,9 @@ impl CodeGenerator {
                         if self.infer_type(left) == "string" {
                             let result = self.gen_string_concat(&left_reg, &right_reg);
                             let free_if_owned = |cg: &mut CodeGenerator, node: &AstNode| {
-                                if let AstNode::Identifier { name, .. } = node {
-                                    if let Some(meta) = cg.current_function_vars.get(name).cloned()
-                                    {
-                                        if !meta.is_string_literal {
+                                if let AstNode::Identifier { name, .. } = node
+                                    && let Some(meta) = cg.current_function_vars.get(name).cloned()
+                                        && !meta.is_string_literal {
                                             let loaded = cg.new_temp();
                                             cg.emit(&format!(
                                                 "  {} = load i8*, i8** {}",
@@ -2039,8 +2028,6 @@ impl CodeGenerator {
                                             ));
                                             cg.emit(&format!("  call void @free(i8* {})", loaded));
                                         }
-                                    }
-                                }
                             };
                             free_if_owned(self, right);
                             free_if_owned(self, left);
@@ -2602,8 +2589,8 @@ impl CodeGenerator {
                         "0".to_string()
                     }
                     "lock" if !self.is_unsafe_fn => {
-                        if let AstNode::Identifier { name: obj_name, .. } = object.as_ref() {
-                            if let Some(meta) = self.current_function_vars.get(obj_name).cloned() {
+                        if let AstNode::Identifier { name: obj_name, .. } = object.as_ref()
+                            && let Some(meta) = self.current_function_vars.get(obj_name).cloned() {
                                 let mutex_ptr = if meta.llvm_name.starts_with("%arg_") {
                                     meta.llvm_name.clone()
                                 } else {
@@ -2621,12 +2608,11 @@ impl CodeGenerator {
                                 self.guard_vars.insert(obj_name.clone());
                                 return mutex_ptr;
                             }
-                        }
                         "null".to_string()
                     }
                     "lock" => {
-                        let obj_reg = self.gen_node(object);
-                        obj_reg
+                        
+                        self.gen_node(object)
                     }
                     _ => "0".to_string(),
                 }
@@ -2687,7 +2673,7 @@ impl CodeGenerator {
                     || Self::body_contains_add(then_block)
                     || else_block
                         .as_ref()
-                        .map_or(false, |e| Self::body_contains_add(e))
+                        .is_some_and(|e| Self::body_contains_add(e))
             }
             AstNode::Call { args, .. } => args.iter().any(Self::body_contains_add),
             AstNode::ExpressionStatement(e) => Self::body_contains_add(e),
@@ -2723,7 +2709,7 @@ impl CodeGenerator {
             } => {
                 Self::body_is_pure(condition)
                     && Self::body_is_pure(then_block)
-                    && else_block.as_ref().map_or(true, |e| Self::body_is_pure(e))
+                    && else_block.as_ref().is_none_or(|e| Self::body_is_pure(e))
             }
             AstNode::While { condition, body } => {
                 Self::body_is_pure(condition) && Self::body_is_pure(body)
@@ -2731,7 +2717,7 @@ impl CodeGenerator {
             AstNode::For { iterator, body, .. } => {
                 Self::body_is_pure(iterator) && Self::body_is_pure(body)
             }
-            AstNode::Return(v) => v.as_ref().map_or(true, |n| Self::body_is_pure(n)),
+            AstNode::Return(v) => v.as_ref().is_none_or(|n| Self::body_is_pure(n)),
             AstNode::BinaryOp { op, left, right } => {
                 if matches!(op, BinOp::Add) {
                     let has_string_lit = matches!(left.as_ref(), AstNode::StringLit(_))
@@ -2808,11 +2794,10 @@ impl CodeGenerator {
         self.non_escaping.clear();
         if let AstNode::Block(stmts) = body {
             for stmt in stmts {
-                if let AstNode::LetBinding { name, .. } = stmt {
-                    if !escaping.contains(name) {
+                if let AstNode::LetBinding { name, .. } = stmt
+                    && !escaping.contains(name) {
                         self.non_escaping.insert(name.clone());
                     }
-                }
             }
         }
 

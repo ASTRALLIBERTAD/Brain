@@ -4,7 +4,7 @@
 // match dispatch and delegates to the appropriate parser instead of
 // duplicating the token sequence.
 
-use crate::ast::{AstNode, EnumVariant, Field, Parameter};
+use crate::ast::{AstNode, EnumVariant, Field};
 use crate::lexer::{Keyword, TokenKind};
 use super::Parser;
 
