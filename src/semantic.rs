@@ -35,10 +35,19 @@ impl<'a> SemanticAnalyzer<'a> {
 
     fn is_copy_type(&self, name: &str) -> bool {
         if let Some(info) = self.lookup_variable(name) {
-            matches!(info.var_type.as_str(), "int" | "bool" | "char")
-        } else {
-            false
+            // Primitive types are copy
+            if matches!(info.var_type.as_str(), "int" | "bool" | "char") {
+                return true;
+            }
+            // A variable whose type is an in-scope type parameter (e.g. T)
+            // is treated as copy for borrow-checking purposes: we don't know
+            // at semantic time whether T is Copy, so we conservatively allow
+            // it to avoid false positives. The codegen handles memory correctly.
+            if self.type_params_in_scope.contains(info.var_type.as_str()) {
+                return true;
+            }
         }
+        false
     }
 
     pub fn analyze(&mut self, ast: &AstNode) -> Result<(), String> {
@@ -55,7 +64,6 @@ impl<'a> SemanticAnalyzer<'a> {
             }
 
             AstNode::Import { .. } => Ok(()),
-            // TODO
             AstNode::FunctionDef {
                 type_params,
                 params,
@@ -349,7 +357,6 @@ impl<'a> SemanticAnalyzer<'a> {
                 }
                 Ok(())
             }
-            // TODO implement this after generics applied
             AstNode::Call { name: _, args, .. } => {
                 let mut borrowed_vars: Vec<String> = Vec::new();
                 for arg in args.iter() {
@@ -582,7 +589,17 @@ impl<'a> SemanticAnalyzer<'a> {
                 }
                 self.get_type(name).unwrap_or("unknown").to_string()
             }
-            AstNode::BinaryOp { left, .. } => self.infer_type(left),
+            AstNode::BinaryOp { left, op, .. } => match op {
+                crate::ast::BinOp::Equal
+                | crate::ast::BinOp::NotEqual
+                | crate::ast::BinOp::LessThan
+                | crate::ast::BinOp::LessEqual
+                | crate::ast::BinOp::GreaterThan
+                | crate::ast::BinOp::GreaterEqual
+                | crate::ast::BinOp::And
+                | crate::ast::BinOp::Or => "bool".to_string(),
+                _ => self.infer_type(left),
+            },
             AstNode::ArrayLit(elements) => {
                 if elements.is_empty() {
                     "[int; 0]".to_string()
@@ -591,6 +608,10 @@ impl<'a> SemanticAnalyzer<'a> {
                     format!("[{}; {}]", elem_type, elements.len())
                 }
             }
+            // Return the struct name so downstream member-access checks have a type.
+            AstNode::StructInit { name, .. } => name.clone(),
+            // Generic or unknown-return calls: resolved later by codegen's infer_type.
+            AstNode::Call { .. } | AstNode::MethodCall { .. } => "unknown".to_string(),
             _ => "unknown".to_string(),
         }
     }

@@ -11,6 +11,9 @@ import { consume_string, borrow_string, ownership_example } from "ownership/owne
 import { files_example } from "files/files.brn";
 import { increment, mutex_example } from "mutex/mutex.brn";
 
+fn identity<T>(x: T) -> T {
+    return x;
+}
 fn main() {
     // ── Types ────────────────────────────────────────────────────────────────
     types_example();
@@ -60,4 +63,8 @@ fn main() {
 
     // ── Mutex ────────────────────────────────────────────────────────────────
     mutex_example();
+
+    let a = identity(42);
+    let b = identity(true);
+    print(a);
 }
