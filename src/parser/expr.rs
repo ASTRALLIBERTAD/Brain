@@ -219,13 +219,12 @@ impl<'a> Parser<'a> {
     fn parse_postfix(&mut self, mut left: AstNode) -> Result<AstNode, String> {
         loop {
             match self.peek_kind().clone() {
-                // fn_name(args...)
+                // fn_name(args...)  — plain call with no explicit type args
                 TokenKind::LParen => {
                     self.advance();
                     let args = self.parse_call_args()?;
                     self.expect(&TokenKind::RParen, "Expected ')' to close argument list")?;
                     match left {
-                        // TODO: add type_args inference when generics are implemented
                         AstNode::Identifier { name, .. } => {
                             left = AstNode::Call {
                                 name,
@@ -276,44 +275,99 @@ impl<'a> Parser<'a> {
                         self.advance();
                         let fields = self.parse_field_inits()?;
                         self.expect(&TokenKind::RBrace, "Expected '}' to close struct literal")?;
-
-                        // TODO: add type_args inference when generics are implemented
                         left = AstNode::StructInit {
                             name,
                             type_args: crate::generics::TypeArgs::empty(),
                             fields,
                         };
                     } else {
-                        break; // not a struct name, stop chaining
+                        break;
                     }
                 }
 
-                // EnumName::Variant  or  EnumName::Variant(val)
-                // DoubleColon is a first-class token now — no peek_ahead hack.
+                // All `::` forms dispatched from one arm:
+                //   fn_name::<T>(args)         — generic function call
+                //   StructName::<T> { fields } — generic struct literal
+                //   EnumName::Variant          — enum value (no type args)
+                //   EnumName::Variant(val)     — enum value with payload
                 TokenKind::DoubleColon => {
-                    if let AstNode::Identifier {
-                        name: enum_name, ..
-                    } = left
-                    {
-                        self.advance();
-                        let variant = self.expect_identifier("Expected variant name after '::'")?;
-                        let value = if self.eat(&TokenKind::LParen) {
-                            if self.check(&TokenKind::RParen) {
+                    if let AstNode::Identifier { name: lhs_name, .. } = &left {
+                        let lhs_name = lhs_name.clone();
+                        self.advance(); // consume ::
+
+                        if self.check(&TokenKind::LessThan) {
+                            // Generic type args: collect them
+                            self.advance(); // consume <
+                            let mut targs = Vec::new();
+                            while !self.check(&TokenKind::GreaterThan) && !self.is_at_end() {
+                                let ty = self.parse_type()?;
+                                targs.push(crate::generics::TypeArg::Explicit(
+                                    crate::generics::Type::from_str(&ty),
+                                ));
+                                if !self.eat(&TokenKind::Comma) {
+                                    break;
+                                }
+                            }
+                            self.expect(
+                                &TokenKind::GreaterThan,
+                                "Expected '>' to close type arguments",
+                            )?;
+                            let type_args = crate::generics::TypeArgs {
+                                args: targs,
+                                def_id: None,
+                            };
+
+                            if self.check(&TokenKind::LParen) {
+                                // fn_name::<T>(args) — generic call
                                 self.advance();
-                                None
+                                let args = self.parse_call_args()?;
+                                self.expect(
+                                    &TokenKind::RParen,
+                                    "Expected ')' to close argument list",
+                                )?;
+                                left = AstNode::Call {
+                                    name: lhs_name,
+                                    type_args,
+                                    args,
+                                };
+                            } else if self.check(&TokenKind::LBrace) && !self.no_struct_init {
+                                // StructName::<T> { fields } — generic struct literal
+                                self.advance();
+                                let fields = self.parse_field_inits()?;
+                                self.expect(
+                                    &TokenKind::RBrace,
+                                    "Expected '}' to close struct literal",
+                                )?;
+                                left = AstNode::StructInit {
+                                    name: lhs_name,
+                                    type_args,
+                                    fields,
+                                };
                             } else {
-                                let v = self.parse_expression()?;
-                                self.expect(&TokenKind::RParen, "Expected ')'")?;
-                                Some(Box::new(v))
+                                return Err(self.error("Expected '(' or '{' after type arguments"));
                             }
                         } else {
-                            None
-                        };
-                        left = AstNode::EnumValue {
-                            enum_name,
-                            variant,
-                            value,
-                        };
+                            // EnumName::Variant  or  EnumName::Variant(val)
+                            let variant =
+                                self.expect_identifier("Expected variant name after '::'")?;
+                            let value = if self.eat(&TokenKind::LParen) {
+                                if self.check(&TokenKind::RParen) {
+                                    self.advance();
+                                    None
+                                } else {
+                                    let v = self.parse_expression()?;
+                                    self.expect(&TokenKind::RParen, "Expected ')'")?;
+                                    Some(Box::new(v))
+                                }
+                            } else {
+                                None
+                            };
+                            left = AstNode::EnumValue {
+                                enum_name: lhs_name,
+                                variant,
+                                value,
+                            };
+                        }
                     } else {
                         break;
                     }

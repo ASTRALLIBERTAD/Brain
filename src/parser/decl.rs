@@ -94,8 +94,7 @@ impl<'a> Parser<'a> {
         self.expect_keyword(&Keyword::Fn, "Expected 'fn'")?;
         let name = self.expect_identifier("Expected function name after 'fn'")?;
 
-        // TODO
-        let _type_params = self.parse_type_params()?;
+        let type_params = self.parse_type_params()?;
 
         self.expect(&TokenKind::LParen, "Expected '(' after function name")?;
         let params = self.parse_parameters()?;
@@ -108,10 +107,9 @@ impl<'a> Parser<'a> {
         };
 
         let body = Box::new(self.parse_block()?);
-        // TODO: add type_params parsing when generics are implemented
         Ok(AstNode::FunctionDef {
             name,
-            type_params: vec![],
+            type_params,
             params,
             return_type,
             body,
@@ -125,8 +123,7 @@ impl<'a> Parser<'a> {
     pub(crate) fn parse_struct_def(&mut self) -> Result<AstNode, String> {
         self.expect_keyword(&Keyword::Struct, "Expected 'struct'")?;
         let name = self.expect_identifier("Expected struct name")?;
-        // TODO
-        let _type_params = self.parse_type_params()?;
+        let type_params = self.parse_type_params()?;
 
         self.expect(&TokenKind::LBrace, "Expected '{' after struct name")?;
 
@@ -143,10 +140,9 @@ impl<'a> Parser<'a> {
         }
 
         self.expect(&TokenKind::RBrace, "Expected '}' to close struct body")?;
-        // TODO: add type_params parsing when generics are implemented
         Ok(AstNode::StructDef {
             name,
-            type_params: vec![],
+            type_params,
             fields,
             is_exported: false,
         })
