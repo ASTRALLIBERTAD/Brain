@@ -66,9 +66,64 @@ impl CodeGenerator {
             return value_reg;
         }
 
-        // Everything else: alloca + store
+        // Everything else: alloca + store.
+        //
+        // For Call nodes we MUST use the actual LLVM return type from
+        // function_signatures rather than infer_type's guess.  infer_type
+        // returns "unknown" for calls (→ i64 via type_to_llvm), but a
+        // bool-returning function produces an i1 register — storing i1 into
+        // an i64 slot is a verifier error.
+        let llvm_type = match value {
+            AstNode::Call {
+                name, type_args, ..
+            } => {
+                // After gen_node(value) ran above, the monomorphic name is
+                // already registered in function_signatures.  Reconstruct it
+                // the same way gen_user_call does so we can look it up.
+                let resolved = if self.generic_fn_defs.contains_key(name.as_str()) {
+                    if !type_args.is_empty() {
+                        let suffix = type_args
+                            .args
+                            .iter()
+                            .map(|ta| match ta {
+                                crate::generics::TypeArg::Explicit(t)
+                                | crate::generics::TypeArg::Inferred(t) => t.mangle(),
+                                crate::generics::TypeArg::Unknown => "int".to_string(),
+                            })
+                            .collect::<Vec<_>>()
+                            .join("_");
+                        format!("{}_{}", name, suffix)
+                    } else {
+                        // Inferred mono: find the first registered key with
+                        // this function's prefix.
+                        let prefix = format!("{}_", name);
+                        self.function_signatures
+                            .keys()
+                            .find(|k| k.starts_with(&prefix))
+                            .cloned()
+                            .unwrap_or_else(|| name.clone())
+                    }
+                } else {
+                    name.clone()
+                };
+                self.function_signatures
+                    .get(resolved.as_str())
+                    .cloned()
+                    .unwrap_or_else(|| self.type_to_llvm(&var_type))
+            }
+            _ => self.type_to_llvm(&var_type),
+        };
+
+        // Derive the source-level type for VarMetadata.  When var_type is
+        // "unknown" (all call returns not in the semantic table), convert the
+        // resolved LLVM type back so subsequent loads use the right width.
+        let effective_var_type = if var_type == "unknown" {
+            self.llvm_to_type(&llvm_type)
+        } else {
+            var_type.clone()
+        };
+
         let ptr = self.new_temp();
-        let llvm_type = self.type_to_llvm(&var_type);
         self.emit(&format!("  {} = alloca {}", ptr, llvm_type));
         self.emit(&format!(
             "  store {} {}, {}* {}",
@@ -79,7 +134,7 @@ impl CodeGenerator {
             name.to_string(),
             VarMetadata {
                 llvm_name: ptr.clone(),
-                var_type,
+                var_type: effective_var_type,
                 is_heap,
                 array_size: None,
                 is_string_literal,
