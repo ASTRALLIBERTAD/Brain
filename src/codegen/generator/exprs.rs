@@ -130,7 +130,11 @@ impl CodeGenerator {
                 ptr
             }
 
-            AstNode::StructInit { name, fields, .. } => self.gen_struct_init(name, fields),
+            AstNode::StructInit {
+                name,
+                fields,
+                type_args,
+            } => self.gen_struct_init(name, fields, type_args),
 
             AstNode::MemberAccess { object, field } => self.gen_member_access(object, field),
 
@@ -198,7 +202,11 @@ impl CodeGenerator {
                 result
             }
 
-            AstNode::Call { name, args, .. } => self.gen_call(name, args),
+            AstNode::Call {
+                name,
+                args,
+                type_args,
+            } => self.gen_call(name, args, type_args),
 
             AstNode::MethodCall {
                 object,
@@ -210,20 +218,132 @@ impl CodeGenerator {
         }
     }
 
-    fn gen_struct_init(&mut self, name: &str, fields: &[(String, AstNode)]) -> String {
-        let struct_fields = self.struct_types.get(name).cloned().unwrap_or_default();
+    fn gen_struct_init(
+        &mut self,
+        name: &str,
+        fields: &[(String, AstNode)],
+        type_args: &crate::generics::TypeArgs,
+    ) -> String {
+        // Generic struct monomorphization
+        // If this struct has type params, compute the concrete name and register
+        // a monomorphized struct type if not already done.
+        let concrete_name: String = if self.generic_struct_defs.contains_key(name) {
+            let type_params: Vec<String> = if let Some(AstNode::StructDef { type_params, .. }) =
+                self.generic_struct_defs.get(name)
+            {
+                type_params.iter().map(|tp| tp.name.clone()).collect()
+            } else {
+                vec![]
+            };
+
+            // Resolve concrete types: explicit type_args first, then infer from field values.
+            let concrete_args: Vec<String> = if !type_args.is_empty() {
+                let explicit: Vec<String> = type_args
+                    .args
+                    .iter()
+                    .map(|ta| match ta {
+                        crate::generics::TypeArg::Explicit(t)
+                        | crate::generics::TypeArg::Inferred(t) => t.mangle(),
+                        crate::generics::TypeArg::Unknown => "int".to_string(),
+                    })
+                    .collect();
+                let mut result = explicit;
+                result.truncate(type_params.len());
+                // Pad any missing with int
+                while result.len() < type_params.len() {
+                    result.push("int".to_string());
+                }
+                result
+            } else {
+                // Infer from the field initialiser expressions.
+                // Build a substitution by matching field name → inferred type.
+                let generic_fields: Vec<(String, String)> =
+                    if let Some(AstNode::StructDef { fields: gf, .. }) =
+                        self.generic_struct_defs.get(name).cloned()
+                    {
+                        gf.iter()
+                            .map(|f| (f.name.clone(), f.field_type.clone()))
+                            .collect()
+                    } else {
+                        vec![]
+                    };
+                let mut subst: std::collections::HashMap<String, String> =
+                    std::collections::HashMap::new();
+                for (field_name, field_val) in fields {
+                    if let Some((_, formal_type)) =
+                        generic_fields.iter().find(|(n, _)| n == field_name)
+                        && type_params.contains(formal_type)
+                    {
+                        let concrete = self.infer_type(field_val);
+                        subst.entry(formal_type.clone()).or_insert(concrete);
+                    }
+                }
+                type_params
+                    .iter()
+                    .map(|tp| subst.get(tp).cloned().unwrap_or_else(|| "int".to_string()))
+                    .collect()
+            };
+
+            let mono_name = format!("{}_{}", name, concrete_args.join("_"));
+
+            // Register the monomorphized struct type if not already done.
+            if !self.struct_types.contains_key(&mono_name)
+                && let Some(AstNode::StructDef {
+                    type_params: tps,
+                    fields: gf,
+                    ..
+                }) = self.generic_struct_defs.get(name).cloned()
+            {
+                let subst: std::collections::HashMap<String, String> = tps
+                    .iter()
+                    .zip(concrete_args.iter())
+                    .map(|(tp, ct)| (tp.name.clone(), ct.clone()))
+                    .collect();
+                let mono_fields: Vec<(String, String)> = gf
+                    .iter()
+                    .map(|f| {
+                        let substituted = subst
+                            .get(&f.field_type)
+                            .cloned()
+                            .unwrap_or_else(|| f.field_type.clone());
+                        (f.name.clone(), substituted)
+                    })
+                    .collect();
+                // Register type layout
+                self.struct_types
+                    .insert(mono_name.clone(), mono_fields.clone());
+                // Emit the LLVM struct type declaration immediately
+                let field_types: Vec<String> = mono_fields
+                    .iter()
+                    .map(|(_, ft)| self.type_to_llvm(ft))
+                    .collect();
+                self.struct_decls.push(format!(
+                    "%{} = type {{ {} }}",
+                    mono_name,
+                    field_types.join(", ")
+                ));
+            }
+
+            mono_name
+        } else {
+            name.to_string()
+        };
+
+        let struct_name = concrete_name.as_str();
+        let struct_fields = self
+            .struct_types
+            .get(struct_name)
+            .cloned()
+            .unwrap_or_default();
         let num_fields = struct_fields.len();
 
-        // Read the decision LetBinding made — they now always agree.
-        // If current_binding_is_heap is true (all struct bindings are), use malloc.
-        // Structs never stack-promote: see codegen/gen/mod.rs for explanation.
         let size = (num_fields as i64) * 8;
         let raw_ptr = self.new_temp();
         let struct_ptr = self.new_temp();
         self.emit(&format!("  {} = call i8* @malloc(i64 {})", raw_ptr, size));
         self.emit(&format!(
             "  {} = bitcast i8* {} to %{}*",
-            struct_ptr, raw_ptr, name
+            struct_ptr, raw_ptr, struct_name
         ));
 
         for (field_name, field_value) in fields {
@@ -240,7 +360,7 @@ impl CodeGenerator {
             let gep = self.new_temp();
             self.emit(&format!(
                 "  {} = getelementptr %{}, %{}* {}, i32 0, i32 {}",
-                gep, name, name, struct_ptr, field_idx
+                gep, struct_name, struct_name, struct_ptr, field_idx
             ));
             self.emit(&format!(
                 "  store {} {}, {}* {}",
@@ -693,7 +813,12 @@ impl CodeGenerator {
         }
     }
 
-    fn gen_call(&mut self, name: &str, args: &[AstNode]) -> String {
+    fn gen_call(
+        &mut self,
+        name: &str,
+        args: &[AstNode],
+        type_args: &crate::generics::TypeArgs,
+    ) -> String {
         match name {
             "print" if !args.is_empty() => match self.infer_type(&args[0]).as_str() {
                 "string" => {
@@ -787,16 +912,18 @@ impl CodeGenerator {
                 ));
                 r
             }
-            _ => self.gen_user_call(name, args),
+            _ => self.gen_user_call(name, args, type_args),
         }
     }
 
-    fn gen_user_call(&mut self, name: &str, args: &[AstNode]) -> String {
+    fn gen_user_call(
+        &mut self,
+        name: &str,
+        args: &[AstNode],
+        type_args: &crate::generics::TypeArgs,
+    ) -> String {
         // ── Monomorphization: if this is a generic function, instantiate it ──
-        // Infer concrete types from call-site arguments, build a mangled name,
-        // and schedule the specialization for emission if not already done.
         let resolved_name: String = if self.generic_fn_defs.contains_key(name) {
-            // Collect the type_params list from the stored generic def
             let type_params: Vec<String> =
                 if let Some(AstNode::FunctionDef { type_params, .. }) =
                     self.generic_fn_defs.get(name)
@@ -806,68 +933,118 @@ impl CodeGenerator {
                     vec![]
                 };
 
-            // Infer a concrete type for each type parameter by scanning args
-            // Strategy: for each type param name, find the first argument whose
-            // inferred type is not a bare type-param name (i.e. it's concrete).
-            // We match positionally against the generic def's param list.
-            let param_types: Vec<String> = if let Some(AstNode::FunctionDef { params, .. }) =
-                self.generic_fn_defs.get(name).cloned()
-            {
-                params
+            // Explicit type args take priority over inference.
+            // Fall back to per-argument inference only for params not covered.
+            let concrete_args: Vec<String> = if !type_args.is_empty() {
+                // Parser gave us explicit args — use them directly.
+                // If fewer explicit args than type params, infer the remainder.
+                let explicit: Vec<String> = type_args
+                    .args
                     .iter()
-                    .map(|p| {
-                        let (_, _, inner) = Self::strip_ref_prefix(&p.param_type);
-                        inner.to_string()
+                    .map(|ta| match ta {
+                        crate::generics::TypeArg::Explicit(t)
+                        | crate::generics::TypeArg::Inferred(t) => t.mangle(),
+                        crate::generics::TypeArg::Unknown => "int".to_string(),
+                    })
+                    .collect();
+                // Pad with inference for any trailing unspecified type params
+                if explicit.len() >= type_params.len() {
+                    explicit[..type_params.len()].to_vec()
+                } else {
+                    let mut result = explicit;
+                    // Infer remaining from call args
+                    let param_types: Vec<String> =
+                        if let Some(AstNode::FunctionDef { params, .. }) =
+                            self.generic_fn_defs.get(name).cloned()
+                        {
+                            params
+                                .iter()
+                                .map(|p| {
+                                    let (_, _, inner) = Self::strip_ref_prefix(&p.param_type);
+                                    inner.to_string()
+                                })
+                                .collect()
+                        } else {
+                            vec![]
+                        };
+                    let mut subst: std::collections::HashMap<String, String> = type_params
+                        [..result.len()]
+                        .iter()
+                        .zip(result.iter())
+                        .map(|(k, v)| (k.clone(), v.clone()))
+                        .collect();
+                    for (i, arg_node) in args.iter().enumerate() {
+                        if let Some(formal) = param_types.get(i)
+                            && type_params[result.len()..].contains(formal)
+                        {
+                            let concrete = self.infer_type(arg_node);
+                            subst.entry(formal.clone()).or_insert(concrete);
+                        }
+                    }
+                    for tp in &type_params[result.len()..] {
+                        result.push(subst.get(tp).cloned().unwrap_or_else(|| "int".to_string()));
+                    }
+                    result
+                }
+            } else {
+                // No explicit type args — infer everything from call-site argument types.
+                let param_types: Vec<String> =
+                    if let Some(AstNode::FunctionDef { params, .. }) =
+                        self.generic_fn_defs.get(name).cloned()
+                    {
+                        params
+                            .iter()
+                            .map(|p| {
+                                let (_, _, inner) = Self::strip_ref_prefix(&p.param_type);
+                                inner.to_string()
+                            })
+                            .collect()
+                    } else {
+                        vec![]
+                    };
+                let mut substitution: std::collections::HashMap<String, String> =
+                    std::collections::HashMap::new();
+                for (i, arg_node) in args.iter().enumerate() {
+                    if let Some(formal) = param_types.get(i)
+                        && type_params.contains(formal)
+                    {
+                        let concrete = self.infer_type(arg_node);
+                        substitution.entry(formal.clone()).or_insert(concrete);
+                    }
+                }
+                type_params
+                    .iter()
+                    .map(|tp| {
+                        substitution
+                            .get(tp)
+                            .cloned()
+                            .unwrap_or_else(|| "int".to_string())
                     })
                     .collect()
-            } else {
-                vec![]
             };
 
-            // Build a mapping: type_param_name → concrete_type
-            // Walk each (formal_param_type, call_arg) pair.
-            let mut substitution: std::collections::HashMap<String, String> =
-                std::collections::HashMap::new();
-            for (i, arg_node) in args.iter().enumerate() {
-                if let Some(formal) = param_types.get(i)
-                    && type_params.contains(formal)
-                {
-                    // This formal type IS a type parameter — infer from the arg
-                    let concrete = self.infer_type(arg_node);
-                    substitution.entry(formal.clone()).or_insert(concrete);
-                }
-            }
+            let mono_name = format!("{}_{}", name, concrete_args.join("_"));
 
-            // Fall back to "i64" for any type param we couldn't infer
-            let concrete_args: Vec<String> = type_params
-                .iter()
-                .map(|tp| {
-                    substitution
-                        .get(tp)
-                        .cloned()
-                        .unwrap_or_else(|| "int".to_string())
-                })
-                .collect();
-
-            // Build the monomorphic name: e.g. "add" + ["int"] → "add_int"
-            let suffix = concrete_args.join("_");
-            let mono_name = format!("{}_{}", name, suffix);
-
-            // Schedule for emission if we haven't already
             if !self.already_monomorphized.contains(&mono_name) {
                 self.already_monomorphized.insert(mono_name.clone());
                 self.mono_queue
                     .push((name.to_string(), concrete_args.clone()));
 
-                // Pre-register the return type so callers can emit the right call
-                // instruction before the function body is emitted.
-                if let Some(AstNode::FunctionDef { return_type, .. }) =
-                    self.generic_fn_defs.get(name).cloned()
+                // Pre-register the return type so callers emit the right LLVM type.
+                if let Some(AstNode::FunctionDef {
+                    return_type,
+                    type_params: tps,
+                    ..
+                }) = self.generic_fn_defs.get(name).cloned()
                 {
+                    let subst: std::collections::HashMap<String, String> = tps
+                        .iter()
+                        .zip(concrete_args.iter())
+                        .map(|(tp, ct)| (tp.name.clone(), ct.clone()))
+                        .collect();
                     let mono_ret = if let Some(rt) = &return_type {
-                        // Substitute type params in the return type string
                         let mut rt_str = rt.clone();
-                        for (tp, concrete) in &substitution {
+                        for (tp, concrete) in &subst {
                             rt_str = rt_str.replace(tp.as_str(), concrete.as_str());
                         }
                         self.type_to_llvm(&rt_str)

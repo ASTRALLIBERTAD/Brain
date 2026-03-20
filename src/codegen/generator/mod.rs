@@ -55,6 +55,7 @@ pub struct CodeGenerator {
     pub(super) guard_vars: HashSet<String>,
 
     pub(super) generic_fn_defs: std::collections::HashMap<String, crate::ast::AstNode>,
+    pub(super) generic_struct_defs: std::collections::HashMap<String, crate::ast::AstNode>,
     pub(super) mono_queue: Vec<(String, Vec<String>)>, // (fn_name, concrete_type_args)
     pub(super) already_monomorphized: std::collections::HashSet<String>,
 }
@@ -84,6 +85,7 @@ impl CodeGenerator {
             is_unsafe_fn: false,
             guard_vars: HashSet::new(),
             generic_fn_defs: std::collections::HashMap::new(),
+            generic_struct_defs: std::collections::HashMap::new(),
             mono_queue: Vec::new(),
             already_monomorphized: std::collections::HashSet::new(),
         }
@@ -94,12 +96,22 @@ impl CodeGenerator {
         if let AstNode::Program(nodes) = ast {
             for node in nodes {
                 match node {
-                    AstNode::StructDef { name, fields, .. } => {
-                        let field_info = fields
-                            .iter()
-                            .map(|f| (f.name.clone(), f.field_type.clone()))
-                            .collect();
-                        self.struct_types.insert(name.clone(), field_info);
+                    AstNode::StructDef {
+                        name,
+                        fields,
+                        type_params,
+                        ..
+                    } => {
+                        if !type_params.is_empty() {
+                            // Generic struct — hold back, instantiate on demand
+                            self.generic_struct_defs.insert(name.clone(), node.clone());
+                        } else {
+                            let field_info = fields
+                                .iter()
+                                .map(|f| (f.name.clone(), f.field_type.clone()))
+                                .collect();
+                            self.struct_types.insert(name.clone(), field_info);
+                        }
                     }
                     AstNode::EnumDef { name, variants, .. } => {
                         let variant_names = variants.iter().map(|v| v.name.clone()).collect();
