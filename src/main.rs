@@ -2,7 +2,9 @@ use std::env;
 use std::fs;
 use std::process;
 
-mod ast; // ← extracted from parser; codegen/semantic/module import from here
+mod ast;
+mod generics;
+
 mod codegen;
 mod lexer;
 mod module;

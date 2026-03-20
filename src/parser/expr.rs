@@ -229,7 +229,7 @@ impl<'a> Parser<'a> {
                         AstNode::Identifier { name, .. } => {
                             left = AstNode::Call {
                                 name,
-                                type_args: crate::ast::TypeArgs::empty(),
+                                type_args: crate::generics::TypeArgs::empty(),
                                 args,
                             }
                         }
@@ -280,7 +280,7 @@ impl<'a> Parser<'a> {
                         // TODO: add type_args inference when generics are implemented
                         left = AstNode::StructInit {
                             name,
-                            type_args: crate::ast::TypeArgs::empty(),
+                            type_args: crate::generics::TypeArgs::empty(),
                             fields,
                         };
                     } else {
