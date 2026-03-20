@@ -114,6 +114,7 @@ pub enum AstNode {
 
     FunctionDef {
         name: String,
+        #[allow(dead_code)]
         type_params: Vec<TypeParam>, // TODO: populate when generics are implemented
         params: Vec<Parameter>,
         return_type: Option<String>,
@@ -124,6 +125,7 @@ pub enum AstNode {
 
     StructDef {
         name: String,
+        #[allow(dead_code)]
         type_params: Vec<TypeParam>, // TODO: populate when generics are implemented
         fields: Vec<Field>,
         is_exported: bool,
@@ -131,6 +133,7 @@ pub enum AstNode {
 
     StructInit {
         name: String,
+        #[allow(dead_code)]
         type_args: TypeArgs, // TODO: populate when generics are implemented
         fields: Vec<(String, AstNode)>,
     },
@@ -199,6 +202,7 @@ pub enum AstNode {
 
     Call {
         name: String,
+        #[allow(dead_code)]
         type_args: TypeArgs, // TODO: populate when generics are implemented
         args: Vec<AstNode>,
     },
