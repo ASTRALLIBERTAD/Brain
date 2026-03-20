@@ -130,7 +130,7 @@ impl CodeGenerator {
                 ptr
             }
 
-            AstNode::StructInit { name, fields } => self.gen_struct_init(name, fields),
+            AstNode::StructInit { name, fields, .. } => self.gen_struct_init(name, fields),
 
             AstNode::MemberAccess { object, field } => self.gen_member_access(object, field),
 

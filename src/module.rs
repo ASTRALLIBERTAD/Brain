@@ -261,7 +261,8 @@ impl ModuleCache {
     /// Recursively collect all direct Call targets from an AST node.
     fn collect_calls_from_body<'a>(node: &'a AstNode, out: &mut Vec<&'a str>) {
         match node {
-            AstNode::Call { name, args } => {
+            AstNode::Call { name, args, .. } => {
+                // TODO: Handle the metadata in the .. spread (type_args) once monomorphization is implemented
                 out.push(name.as_str());
                 for a in args {
                     Self::collect_calls_from_body(a, out);

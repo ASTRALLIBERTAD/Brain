@@ -104,8 +104,10 @@ impl<'a> Parser<'a> {
         };
 
         let body = Box::new(self.parse_block()?);
+        // TODO: add type_params parsing when generics are implemented
         Ok(AstNode::FunctionDef {
             name,
+            type_params: vec![],
             params,
             return_type,
             body,
@@ -134,8 +136,10 @@ impl<'a> Parser<'a> {
         }
 
         self.expect(&TokenKind::RBrace, "Expected '}' to close struct body")?;
+        // TODO: add type_params parsing when generics are implemented
         Ok(AstNode::StructDef {
             name,
+            type_params: vec![],
             fields,
             is_exported: false,
         })
@@ -202,3 +206,4 @@ impl<'a> Parser<'a> {
         })
     }
 }
+

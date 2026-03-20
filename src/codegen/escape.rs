@@ -38,7 +38,7 @@ impl EscapeAnalysis {
                 self.mark_escaping(val);
                 self.visit(val);
             }
-            AstNode::Call { name, args } => {
+            AstNode::Call { name, args, .. } => {
                 let safe_builtins = matches!(
                     name.as_str(),
                     "print"

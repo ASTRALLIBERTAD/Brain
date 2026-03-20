@@ -225,7 +225,14 @@ impl<'a> Parser<'a> {
                     let args = self.parse_call_args()?;
                     self.expect(&TokenKind::RParen, "Expected ')' to close argument list")?;
                     match left {
-                        AstNode::Identifier { name, .. } => left = AstNode::Call { name, args },
+                        // TODO: add type_args inference when generics are implemented
+                        AstNode::Identifier { name, .. } => {
+                            left = AstNode::Call {
+                                name,
+                                type_args: crate::ast::TypeArgs::empty(),
+                                args,
+                            }
+                        }
                         _ => return Err(self.error("Invalid call target")),
                     }
                 }
@@ -269,7 +276,13 @@ impl<'a> Parser<'a> {
                         self.advance();
                         let fields = self.parse_field_inits()?;
                         self.expect(&TokenKind::RBrace, "Expected '}' to close struct literal")?;
-                        left = AstNode::StructInit { name, fields };
+
+                        // TODO: add type_args inference when generics are implemented
+                        left = AstNode::StructInit {
+                            name,
+                            type_args: crate::ast::TypeArgs::empty(),
+                            fields,
+                        };
                     } else {
                         break; // not a struct name, stop chaining
                     }

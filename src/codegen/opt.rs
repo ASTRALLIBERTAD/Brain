@@ -37,7 +37,7 @@ impl CodeGenerator {
 
     pub(super) fn collect_calls(node: &AstNode, queue: &mut Vec<String>) {
         match node {
-            AstNode::Call { name, args } => {
+            AstNode::Call { name, args, .. } => {
                 queue.push(name.clone());
                 for arg in args {
                     Self::collect_calls(arg, queue);
@@ -174,7 +174,7 @@ impl CodeGenerator {
             AstNode::Assignment { .. }
             | AstNode::ArrayAssignment { .. }
             | AstNode::MemberAssignment { .. } => false,
-            AstNode::Call { name, args } => {
+            AstNode::Call { name, args, .. } => {
                 let known_pure = matches!(
                     name.as_str(),
                     "vec_new"
