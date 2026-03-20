@@ -341,8 +341,8 @@ impl<'a> SemanticAnalyzer<'a> {
                 }
                 Ok(())
             }
-
-            AstNode::Call { name: _, args } => {
+            // TODO implement this after generics applied
+            AstNode::Call { name: _, args, .. } => {
                 let mut borrowed_vars: Vec<String> = Vec::new();
                 for arg in args.iter() {
                     if let AstNode::Reference(ref_expr) = arg {

@@ -198,7 +198,7 @@ impl CodeGenerator {
                 result
             }
 
-            AstNode::Call { name, args } => self.gen_call(name, args),
+            AstNode::Call { name, args, .. } => self.gen_call(name, args),
 
             AstNode::MethodCall {
                 object,
