@@ -17,6 +17,7 @@ pub struct SemanticAnalyzer<'a> {
     current_column: usize,
     in_loop: bool,
     in_unsafe_fn: bool,
+    type_params_in_scope: std::collections::HashSet<String>,
 }
 
 impl<'a> SemanticAnalyzer<'a> {
@@ -28,6 +29,7 @@ impl<'a> SemanticAnalyzer<'a> {
             current_column: 1,
             in_loop: false,
             in_unsafe_fn: false,
+            type_params_in_scope: std::collections::HashSet::new(),
         }
     }
 
@@ -53,13 +55,18 @@ impl<'a> SemanticAnalyzer<'a> {
             }
 
             AstNode::Import { .. } => Ok(()),
-
+            // TODO
             AstNode::FunctionDef {
+                type_params,
                 params,
                 body,
                 is_unsafe,
                 ..
             } => {
+                let prev = std::mem::take(&mut self.type_params_in_scope);
+                for tp in type_params {
+                    self.type_params_in_scope.insert(tp.name.clone());
+                }
                 let prev_unsafe = self.in_unsafe_fn;
                 self.in_unsafe_fn = *is_unsafe;
                 self.push_scope();
@@ -87,6 +94,7 @@ impl<'a> SemanticAnalyzer<'a> {
                 }
                 self.visit(body)?;
                 self.pop_scope();
+                self.type_params_in_scope = prev;
                 self.in_unsafe_fn = prev_unsafe;
                 Ok(())
             }
@@ -452,6 +460,9 @@ impl<'a> SemanticAnalyzer<'a> {
     }
 
     fn check_variable_exists(&self, name: &str) -> Result<(), String> {
+        if self.type_params_in_scope.contains(name) {
+            return Ok(());
+        }
         if self.lookup_variable(name).is_none() {
             return Err(format!(
                 "{}:{}:{}: Error: cannot find value '{}' in this scope",
@@ -566,6 +577,9 @@ impl<'a> SemanticAnalyzer<'a> {
             AstNode::Character(_) => "char".to_string(),
             AstNode::StringLit(_) => "string".to_string(),
             AstNode::Identifier { name, .. } => {
+                if self.type_params_in_scope.contains(name.as_str()) {
+                    return "unknown".to_string();
+                }
                 self.get_type(name).unwrap_or("unknown").to_string()
             }
             AstNode::BinaryOp { left, .. } => self.infer_type(left),

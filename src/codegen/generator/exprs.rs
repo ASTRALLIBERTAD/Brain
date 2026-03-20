@@ -792,6 +792,99 @@ impl CodeGenerator {
     }
 
     fn gen_user_call(&mut self, name: &str, args: &[AstNode]) -> String {
+        // ── Monomorphization: if this is a generic function, instantiate it ──
+        // Infer concrete types from call-site arguments, build a mangled name,
+        // and schedule the specialization for emission if not already done.
+        let resolved_name: String = if self.generic_fn_defs.contains_key(name) {
+            // Collect the type_params list from the stored generic def
+            let type_params: Vec<String> =
+                if let Some(AstNode::FunctionDef { type_params, .. }) =
+                    self.generic_fn_defs.get(name)
+                {
+                    type_params.iter().map(|tp| tp.name.clone()).collect()
+                } else {
+                    vec![]
+                };
+
+            // Infer a concrete type for each type parameter by scanning args
+            // Strategy: for each type param name, find the first argument whose
+            // inferred type is not a bare type-param name (i.e. it's concrete).
+            // We match positionally against the generic def's param list.
+            let param_types: Vec<String> = if let Some(AstNode::FunctionDef { params, .. }) =
+                self.generic_fn_defs.get(name).cloned()
+            {
+                params
+                    .iter()
+                    .map(|p| {
+                        let (_, _, inner) = Self::strip_ref_prefix(&p.param_type);
+                        inner.to_string()
+                    })
+                    .collect()
+            } else {
+                vec![]
+            };
+
+            // Build a mapping: type_param_name → concrete_type
+            // Walk each (formal_param_type, call_arg) pair.
+            let mut substitution: std::collections::HashMap<String, String> =
+                std::collections::HashMap::new();
+            for (i, arg_node) in args.iter().enumerate() {
+                if let Some(formal) = param_types.get(i)
+                    && type_params.contains(formal)
+                {
+                    // This formal type IS a type parameter — infer from the arg
+                    let concrete = self.infer_type(arg_node);
+                    substitution.entry(formal.clone()).or_insert(concrete);
+                }
+            }
+
+            // Fall back to "i64" for any type param we couldn't infer
+            let concrete_args: Vec<String> = type_params
+                .iter()
+                .map(|tp| {
+                    substitution
+                        .get(tp)
+                        .cloned()
+                        .unwrap_or_else(|| "int".to_string())
+                })
+                .collect();
+
+            // Build the monomorphic name: e.g. "add" + ["int"] → "add_int"
+            let suffix = concrete_args.join("_");
+            let mono_name = format!("{}_{}", name, suffix);
+
+            // Schedule for emission if we haven't already
+            if !self.already_monomorphized.contains(&mono_name) {
+                self.already_monomorphized.insert(mono_name.clone());
+                self.mono_queue
+                    .push((name.to_string(), concrete_args.clone()));
+
+                // Pre-register the return type so callers can emit the right call
+                // instruction before the function body is emitted.
+                if let Some(AstNode::FunctionDef { return_type, .. }) =
+                    self.generic_fn_defs.get(name).cloned()
+                {
+                    let mono_ret = if let Some(rt) = &return_type {
+                        // Substitute type params in the return type string
+                        let mut rt_str = rt.clone();
+                        for (tp, concrete) in &substitution {
+                            rt_str = rt_str.replace(tp.as_str(), concrete.as_str());
+                        }
+                        self.type_to_llvm(&rt_str)
+                    } else {
+                        "void".to_string()
+                    };
+                    self.function_signatures.insert(mono_name.clone(), mono_ret);
+                }
+            }
+
+            mono_name
+        } else {
+            name.to_string()
+        };
+
+        let call_name = resolved_name.as_str();
+
         let mut arg_regs: Vec<String> = Vec::new();
         let mut arg_types: Vec<String> = Vec::new();
 
@@ -875,11 +968,18 @@ impl CodeGenerator {
 
         let return_type = self
             .function_signatures
-            .get(name)
+            .get(call_name)
             .cloned()
             .unwrap_or_else(|| "i64".to_string());
 
-        let mangled = Self::mangle_fn(name);
+        // Monomorphized names are already fully mangled (e.g. "add_int").
+        // Non-generic names go through the normal mangle_fn path.
+        let mangled = if call_name != name {
+            format!("brn_{}", call_name)
+        } else {
+            Self::mangle_fn(call_name)
+        };
+
         if return_type == "void" {
             self.emit(&format!("  call void @{}({})", mangled, args_str));
             "0".to_string()

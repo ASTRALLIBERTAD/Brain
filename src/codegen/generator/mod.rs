@@ -53,6 +53,10 @@ pub struct CodeGenerator {
 
     pub(super) is_unsafe_fn: bool,
     pub(super) guard_vars: HashSet<String>,
+
+    pub(super) generic_fn_defs: std::collections::HashMap<String, crate::ast::AstNode>,
+    pub(super) mono_queue: Vec<(String, Vec<String>)>, // (fn_name, concrete_type_args)
+    pub(super) already_monomorphized: std::collections::HashSet<String>,
 }
 
 impl CodeGenerator {
@@ -79,6 +83,9 @@ impl CodeGenerator {
             current_binding_is_heap: false,
             is_unsafe_fn: false,
             guard_vars: HashSet::new(),
+            generic_fn_defs: std::collections::HashMap::new(),
+            mono_queue: Vec::new(),
+            already_monomorphized: std::collections::HashSet::new(),
         }
     }
 
@@ -103,18 +110,24 @@ impl CodeGenerator {
                         params,
                         body,
                         return_type,
+                        type_params,
                         ..
                     } => {
-                        let ret_llvm = if name == "main" {
-                            "i32".to_string()
-                        } else if let Some(rt) = return_type {
-                            self.type_to_llvm(rt)
+                        if !type_params.is_empty() {
+                            // hold back — emit only when called with concrete types
+                            self.generic_fn_defs.insert(name.clone(), node.clone());
                         } else {
-                            "void".to_string()
-                        };
-                        self.function_signatures.insert(name.clone(), ret_llvm);
-                        if Self::infer_purity(params, body) {
-                            self.pure_functions.insert(name.clone());
+                            let ret_llvm = if name == "main" {
+                                "i32".to_string()
+                            } else if let Some(rt) = return_type {
+                                self.type_to_llvm(rt)
+                            } else {
+                                "void".to_string()
+                            };
+                            self.function_signatures.insert(name.clone(), ret_llvm);
+                            if Self::infer_purity(params, body) {
+                                self.pure_functions.insert(name.clone());
+                            }
                         }
                     }
                     _ => {}
@@ -144,8 +157,13 @@ impl CodeGenerator {
         if let AstNode::Program(nodes) = ast {
             for node in nodes {
                 match node {
-                    AstNode::FunctionDef { name, .. } if reachable.contains(name.as_str()) => {
-                        self.gen_node(node);
+                    AstNode::FunctionDef {
+                        name, type_params, ..
+                    } if reachable.contains(name.as_str()) => {
+                        if type_params.is_empty() {
+                            self.gen_node(node); // non-generic, emit normally
+                        }
+                        // generic fns are emitted on demand from mono_queue
                     }
                     AstNode::LetBinding { name, .. } if reachable.contains(name.as_str()) => {
                         self.gen_node(node);
@@ -154,6 +172,77 @@ impl CodeGenerator {
                     _ => {
                         self.gen_node(node);
                     }
+                }
+            }
+        }
+
+        // Drain the monomorphization queue
+        // Emitting a specialization may push further entries (e.g. a generic
+        // that calls another generic), so we loop until the queue is empty.
+        loop {
+            let batch: Vec<(String, Vec<String>)> = std::mem::take(&mut self.mono_queue);
+            if batch.is_empty() {
+                break;
+            }
+            for (generic_name, concrete_args) in batch {
+                let generic_node = match self.generic_fn_defs.get(&generic_name).cloned() {
+                    Some(n) => n,
+                    None => continue,
+                };
+                if let AstNode::FunctionDef {
+                    type_params,
+                    params,
+                    return_type,
+                    body,
+                    is_unsafe,
+                    ..
+                } = generic_node
+                {
+                    // substitution map: type_param_name → concrete_type
+                    let subst: HashMap<String, String> = type_params
+                        .iter()
+                        .zip(concrete_args.iter())
+                        .map(|(tp, ct)| (tp.name.clone(), ct.clone()))
+                        .collect();
+
+                    // Apply substitution to each parameter's type string
+                    let mono_params: Vec<crate::ast::Parameter> = params
+                        .iter()
+                        .map(|p| {
+                            let (is_ref, is_mut, inner) = Self::strip_ref_prefix(&p.param_type);
+                            let substituted = subst
+                                .get(inner)
+                                .cloned()
+                                .unwrap_or_else(|| inner.to_string());
+                            let new_type = if is_ref && is_mut {
+                                format!("&mut {}", substituted)
+                            } else if is_ref {
+                                format!("&{}", substituted)
+                            } else {
+                                substituted
+                            };
+                            crate::ast::Parameter {
+                                is_reference: p.is_reference,
+                                is_mutable: p.is_mutable,
+                                name: p.name.clone(),
+                                param_type: new_type,
+                            }
+                        })
+                        .collect();
+
+                    // Apply substitution to the return type string
+                    let mono_return: Option<String> = return_type.as_ref().map(|rt| {
+                        let mut s = rt.clone();
+                        for (tp, ct) in &subst {
+                            s = s.replace(tp.as_str(), ct.as_str());
+                        }
+                        s
+                    });
+
+                    // e.g. generic "add" with ["int"] → mono name "add_int"
+                    let mono_name = format!("{}_{}", generic_name, concrete_args.join("_"));
+
+                    self.gen_function(&mono_name, &mono_params, &body, &mono_return, is_unsafe);
                 }
             }
         }

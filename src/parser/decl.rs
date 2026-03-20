@@ -6,6 +6,7 @@
 
 use super::Parser;
 use crate::ast::{AstNode, EnumVariant, Field};
+use crate::generics::{TraitBound, TypeParam, TypeParamId};
 use crate::lexer::{Keyword, TokenKind};
 
 impl<'a> Parser<'a> {
@@ -93,6 +94,9 @@ impl<'a> Parser<'a> {
         self.expect_keyword(&Keyword::Fn, "Expected 'fn'")?;
         let name = self.expect_identifier("Expected function name after 'fn'")?;
 
+        // TODO
+        let _type_params = self.parse_type_params()?;
+
         self.expect(&TokenKind::LParen, "Expected '(' after function name")?;
         let params = self.parse_parameters()?;
         self.expect(&TokenKind::RParen, "Expected ')' to close parameter list")?;
@@ -121,6 +125,9 @@ impl<'a> Parser<'a> {
     pub(crate) fn parse_struct_def(&mut self) -> Result<AstNode, String> {
         self.expect_keyword(&Keyword::Struct, "Expected 'struct'")?;
         let name = self.expect_identifier("Expected struct name")?;
+        // TODO
+        let _type_params = self.parse_type_params()?;
+
         self.expect(&TokenKind::LBrace, "Expected '{' after struct name")?;
 
         let mut fields = Vec::new();
@@ -175,6 +182,65 @@ impl<'a> Parser<'a> {
             variants,
             is_exported: false,
         })
+    }
+
+    // Parses <T>, <T, U: Add>, or nothing (returns empty vec)
+    pub(crate) fn parse_type_params(&mut self) -> Result<Vec<TypeParam>, String> {
+        if !self.check(&TokenKind::LessThan) {
+            return Ok(vec![]);
+        }
+        self.advance(); // consume 
+
+        let mut params = Vec::new();
+        let mut next_id = 0u32; // local counter, will move to TyCtx later
+
+        while !self.check(&TokenKind::GreaterThan) && !self.is_at_end() {
+            let name = self.expect_identifier("Expected type parameter name")?;
+            let id = TypeParamId(next_id);
+            next_id += 1;
+
+            // optional bounds: T: Add, T: Add + Eq
+            let constraints = if self.eat(&TokenKind::Colon) {
+                self.parse_trait_bounds()?
+            } else {
+                vec![]
+            };
+
+            params.push(TypeParam {
+                name,
+                id,
+                constraints,
+            });
+            if !self.eat(&TokenKind::Comma) {
+                break;
+            }
+        }
+
+        self.expect(
+            &TokenKind::GreaterThan,
+            "Expected '>' to close type parameters",
+        )?;
+        Ok(params)
+    }
+
+    fn parse_trait_bounds(&mut self) -> Result<Vec<TraitBound>, String> {
+        let mut bounds = Vec::new();
+        loop {
+            let name = self.expect_identifier("Expected trait name")?;
+            let bound = match name.as_str() {
+                "Copy" => TraitBound::copy(),
+                "Add" => TraitBound::add(),
+                "Eq" => TraitBound::eq(),
+                "Ord" => TraitBound::ord(),
+                "Print" => TraitBound::print(),
+                _ => return Err(self.error(&format!("Unknown trait bound '{}'", name))),
+            };
+            bounds.push(bound);
+            if !self.eat(&TokenKind::Plus) {
+                break;
+            }
+        }
+        Ok(bounds)
     }
 
     // let binding
