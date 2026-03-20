@@ -75,13 +75,19 @@ impl CodeGenerator {
         // an i64 slot is a verifier error.
         let llvm_type = match value {
             AstNode::Call {
-                name, type_args, ..
+                name,
+                type_args,
+                args: call_args,
+                ..
             } => {
-                // After gen_node(value) ran above, the monomorphic name is
-                // already registered in function_signatures.  Reconstruct it
-                // the same way gen_user_call does so we can look it up.
+                // Reconstruct the exact monomorphic name gen_user_call produced
+                // so we can look up its return type in function_signatures.
+                // The old prefix-search was non-deterministic when multiple
+                // specializations existed (e.g. identity_int and identity_bool
+                // both start with "identity_" — HashMap iteration picks randomly).
                 let resolved = if self.generic_fn_defs.contains_key(name.as_str()) {
                     if !type_args.is_empty() {
+                        // Explicit type args: reconstruct suffix directly.
                         let suffix = type_args
                             .args
                             .iter()
@@ -94,14 +100,43 @@ impl CodeGenerator {
                             .join("_");
                         format!("{}_{}", name, suffix)
                     } else {
-                        // Inferred mono: find the first registered key with
-                        // this function's prefix.
-                        let prefix = format!("{}_", name);
-                        self.function_signatures
-                            .keys()
-                            .find(|k| k.starts_with(&prefix))
-                            .cloned()
-                            .unwrap_or_else(|| name.clone())
+                        // Inferred: replicate gen_user_call's type inference to
+                        // get the exact same mono name that was registered.
+                        let (type_params, param_types) = if let Some(AstNode::FunctionDef {
+                            type_params,
+                            params,
+                            ..
+                        }) =
+                            self.generic_fn_defs.get(name.as_str())
+                        {
+                            let tps: Vec<String> =
+                                type_params.iter().map(|tp| tp.name.clone()).collect();
+                            let pts: Vec<String> = params
+                                .iter()
+                                .map(|p| {
+                                    let (_, _, inner) = Self::strip_ref_prefix(&p.param_type);
+                                    inner.to_string()
+                                })
+                                .collect();
+                            (tps, pts)
+                        } else {
+                            (vec![], vec![])
+                        };
+                        let mut subst: std::collections::HashMap<String, String> =
+                            std::collections::HashMap::new();
+                        for (i, arg_node) in call_args.iter().enumerate() {
+                            if let Some(formal) = param_types.get(i)
+                                && type_params.contains(formal)
+                            {
+                                let concrete = self.infer_type(arg_node);
+                                subst.entry(formal.clone()).or_insert(concrete);
+                            }
+                        }
+                        let concrete_args: Vec<String> = type_params
+                            .iter()
+                            .map(|tp| subst.get(tp).cloned().unwrap_or_else(|| "int".to_string()))
+                            .collect();
+                        format!("{}_{}", name, concrete_args.join("_"))
                     }
                 } else {
                     name.clone()
