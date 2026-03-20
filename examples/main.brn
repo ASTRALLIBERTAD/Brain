@@ -14,6 +14,11 @@ import { increment, mutex_example } from "mutex/mutex.brn";
 fn identity<T>(x: T) -> T {
     return x;
 }
+
+fn add_generic<T: Add>(a: T, b: T) -> T {
+    return a + b;
+}
+
 fn main() {
     // ── Types ────────────────────────────────────────────────────────────────
     types_example();
@@ -64,7 +69,9 @@ fn main() {
     // ── Mutex ────────────────────────────────────────────────────────────────
     mutex_example();
 
-    let a = identity(42);
-    let b = identity(true);
-    print(a);
+    let x = identity(42);
+    print(x);
+
+    let y = add_generic(10, 20);
+    print(y);
 }
