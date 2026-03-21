@@ -1,11 +1,16 @@
-#![allow(dead_code)]
-
-// Generics infrastructure — not yet wired into the compiler.
-// These types are populated incrementally as generics are implemented.
+// Generics infrastructure.
+//
+// Several items here are populated by the parser and infer pass but not yet
+// consumed by later passes (bounds checking, def-id resolution).  They are
+// suppressed individually rather than with a blanket module-level allow so
+// that genuinely unused code in other modules still gets caught.
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct TypeParamId(pub u32);
 
+/// Ties a TypeArgs site back to the specific generic definition it
+/// instantiates. Two generics `fn foo<T>` and `fn bar<T>` have the same
+/// param name but different DefIds, so call sites remain unambiguous.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct DefId(pub u32);
 
@@ -51,14 +56,25 @@ impl TraitBound {
     }
 }
 
+/// A type parameter declared on a generic function or struct.
+///
+/// `id` is assigned by the parser and is globally unique across all generic
+/// definitions in a compilation unit — it distinguishes `T` in `fn foo<T>`
+/// from `T` in `fn bar<T>`.
+///
+/// `constraints` holds the trait bounds parsed from `<T: Add + Eq>` syntax
+/// and will be enforced by the semantic/bounds-checking pass.
 #[derive(Clone, Debug)]
 pub struct TypeParam {
     pub name: String,
+    #[allow(dead_code)] // assigned by parser; used by future bounds-checking pass
     pub id: TypeParamId,
+    #[allow(dead_code)] // populated from <T: Add + Eq> syntax; enforced by semantic pass
     pub constraints: Vec<TraitBound>,
 }
 
 impl TypeParam {
+    #[allow(dead_code)] // called by parser via parse_type_params
     pub fn new(name: impl Into<String>, id: TypeParamId) -> Self {
         TypeParam {
             name: name.into(),
@@ -67,11 +83,15 @@ impl TypeParam {
         }
     }
 
+    #[allow(dead_code)] // used by parse_trait_bounds to attach constraints
     pub fn with_bounds(mut self, bounds: Vec<TraitBound>) -> Self {
         self.constraints = bounds;
         self
     }
 
+    /// Returns true if this type param satisfies the given trait bound.
+    /// Used by the semantic pass to enforce `<T: Add>` constraints.
+    #[allow(dead_code)] // called once bounds-checking is wired in
     pub fn satisfies(&self, bound: &BuiltinTrait) -> bool {
         self.constraints.iter().any(|c| &c.trait_ref == bound)
     }
@@ -83,14 +103,29 @@ pub enum Type {
     Bool,
     Char,
     Str,
+    #[allow(dead_code)] // used by from_str and return-type inference
     Void,
+    /// An unresolved type parameter, identified by its unique id.
+    /// Present during inference before substitution replaces it with a
+    /// concrete type.  Mangled as `"T0"`, `"T1"`, etc. so partially-resolved
+    /// names are still unique and debuggable.
+    #[allow(dead_code)]
     Param(TypeParamId),
+    /// A named type, e.g. a user struct or a future generic instantiation.
     Named(String, Vec<Type>),
+    /// A reference type: `&T` (false) or `&mut T` (true).
+    /// Produced when a type param is instantiated with a reference type.
+    #[allow(dead_code)]
     Ref(bool, Box<Type>),
+    /// A fixed-size array type: `[T; N]`.
+    /// Produced when a type param is instantiated with an array type.
+    #[allow(dead_code)]
     Array(Box<Type>, usize),
 }
 
 impl Type {
+    /// Produce the suffix used to mangle a monomorphized name,
+    /// e.g. `Type::Int` → `"int"`, `Type::Named("Vec", [Int])` → `"Vec_int"`.
     pub fn mangle(&self) -> String {
         match self {
             Type::Int => "int".into(),
@@ -112,10 +147,6 @@ impl Type {
             Type::Ref(true, inner) => format!("refmut_{}", inner.mangle()),
             Type::Array(inner, size) => format!("arr{}_{}", size, inner.mangle()),
         }
-    }
-
-    pub fn is_copy(&self) -> bool {
-        matches!(self, Type::Int | Type::Bool | Type::Char)
     }
 
     pub fn from_str(s: &str) -> Self {
@@ -146,9 +177,16 @@ impl TypeArg {
     }
 }
 
+/// Type arguments at a call or struct-init site, e.g. `foo::<int, bool>(...)`.
+///
+/// `def_id` identifies which generic definition these args belong to.
+/// It is `None` until the resolver/type-checker assigns it; codegen does
+/// not require it (it uses `mono_suffix()` directly), but future passes
+/// that need to look up the original `TypeParam` list by identity will.
 #[derive(Clone, Debug)]
 pub struct TypeArgs {
     pub args: Vec<TypeArg>,
+    #[allow(dead_code)] // assigned by resolver; identifies which generic def this instantiates
     pub def_id: Option<DefId>,
 }
 
@@ -164,14 +202,17 @@ impl TypeArgs {
         self.args.is_empty()
     }
 
+    /// Resolved concrete types for all args, or `None` if any is `Unknown`.
+    #[allow(dead_code)] // used by mono_suffix; also available for future passes
     pub fn resolved(&self) -> Option<Vec<&Type>> {
         self.args.iter().map(|a| a.ty()).collect()
     }
 
+    /// Returns the mangled suffix for a monomorphized name, e.g. `"int_bool"`.
+    /// Returns `None` if any arg is `Unknown`.
     pub fn mono_suffix(&self) -> Option<String> {
-        let resolved = self.resolved()?;
         Some(
-            resolved
+            self.resolved()?
                 .iter()
                 .map(|t| t.mangle())
                 .collect::<Vec<_>>()
@@ -179,3 +220,4 @@ impl TypeArgs {
         )
     }
 }
+

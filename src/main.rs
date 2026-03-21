@@ -3,9 +3,9 @@ use std::fs;
 use std::process;
 
 mod ast;
-mod generics;
-
 mod codegen;
+mod generics;
+mod infer;
 mod lexer;
 mod module;
 mod parser;
@@ -42,12 +42,7 @@ fn resolve_clang() -> String {
     }
 
     // 3. Fall back to system PATH
-    #[allow(clippy::if_same_then_else)]
-    if cfg!(target_os = "windows") {
-        "clang".to_string()
-    } else {
-        "clang".to_string()
-    }
+    "clang".to_string()
 }
 
 fn main() {
@@ -126,6 +121,9 @@ fn compile_file(input_file: &str, output_file: &str) {
         eprintln!("{}", e);
         process::exit(1);
     }
+
+    // Inference pass: populate TypeArgs on generic calls before codegen
+    let ast = infer::InferPass::new().run(ast);
 
     println!("  [5/5] Code generation...");
     let mut codegen = CodeGenerator::new();
